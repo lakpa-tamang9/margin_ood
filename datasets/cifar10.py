@@ -1,9 +1,10 @@
 import torch
 from torchvision.datasets import CIFAR10
-from torchvision import transforms
 import numpy as np
 from PIL import Image
-from aggressive_aug import DoTransform
+from datasets.aggressive_aug import DoTransform
+import torchvision.transforms as T
+import logging
 
 
 class CIFAR10Extended(CIFAR10):
@@ -45,20 +46,29 @@ class CIFAR10Extended(CIFAR10):
 
             for img in sampled_data:
                 transformed_img = self.ood_transform(Image.fromarray(img))
-                ood_data.append(np.array(transformed_img))
+                try:
+                    assert isinstance(
+                        transformed_img, list
+                    )  # The transformed image must be a list
+                except Exception as e:
+                    logging.info(e)
+
+                ood_data.extend(transformed_img)
                 ood_labels.append(10)  # Label for the 'ood' class
 
         return np.array(ood_data), ood_labels
 
     def __getitem__(self, index):
-        if index < len(self.data):
-            img, target = self.data[index], self.targets[index]
-            img = Image.fromarray(img)
-        else:
+        is_ood_class = index >= len(self.data)
+
+        if is_ood_class:
             img, target = (
                 self.ood_data[index - len(self.data)],
                 self.ood_labels[index - len(self.data)],
             )
+        else:
+            img, target = self.data[index], self.targets[index]
+            img = Image.fromarray(img)
 
         if self.transform is not None and index < len(self.data):
             img = self.transform(img)
@@ -72,24 +82,3 @@ class CIFAR10Extended(CIFAR10):
 
     def __len__(self):
         return super().__len__() + len(self.ood_data)
-
-
-# Define your original and new transformations
-id_transform = transforms.Compose(
-    [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
-)
-
-ood_transform = DoTransform.do_transform(dataset="cifar10")
-
-# Create an instance of your extended dataset
-extended_dataset = CIFAR10Extended(
-    root="./data",
-    train=True,
-    download=True,
-    transform=id_transform,
-    ood_transform=ood_transform,
-    m=100,
-)
-
-# Use DataLoader to iterate over the dataset
-dataloader = torch.utils.data.DataLoader(extended_dataset, batch_size=64, shuffle=True)
