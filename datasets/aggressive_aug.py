@@ -30,14 +30,12 @@ class DoTransform:
 
     @staticmethod
     def do_transform(dataset):
-        std = [x / 255 for x in [63.0, 62.1, 66.7]]
-        mean = [x / 255 for x in [125.3, 123.0, 113.9]]
         if dataset == "cifar10":
             size = 32
         # Define the transformations
         pipeline = T.Compose(
             [
-                T.CenterCrop(size),
+                # T.CenterCrop(size),
                 T.FiveCrop(size),  # Size of each crop
                 PerCropTransform(
                     T.Compose(
@@ -46,7 +44,6 @@ class DoTransform:
                             T.RandomVerticalFlip(),
                             T.ToTensor(),
                             GaussianNoise(0.0, 0.1),
-                            T.Normalize(mean, std),
                         ]
                     )
                 ),
