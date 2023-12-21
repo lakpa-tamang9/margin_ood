@@ -31,7 +31,12 @@ class CIFAR10Extended(CIFAR10):
         self.classes = self.classes + ["ood"]
 
         # Create the new class data
-        self.ood_data, self.ood_labels = self.create_ood_class(m)
+        ood_data, ood_labels = self.create_ood_class(m)
+        ood_data = ood_data.transpose(0, 2, 3, 1)
+        self.data = np.concatenate((self.data, ood_data), axis=0)
+        self.targets.extend(ood_labels)
+        print(len(self.data))
+        print(len(self.targets))
 
     def create_ood_class(self, m):
         ood_data = []
@@ -46,6 +51,7 @@ class CIFAR10Extended(CIFAR10):
 
             for img in sampled_data:
                 transformed_img = self.ood_transform(Image.fromarray(img))
+                transformed_labels = [10] * 5
                 try:
                     assert isinstance(
                         transformed_img, list
@@ -54,7 +60,7 @@ class CIFAR10Extended(CIFAR10):
                     logging.info(e)
 
                 ood_data.extend(transformed_img)
-                ood_labels.append(10)  # Label for the 'ood' class
+                ood_labels.extend(transformed_labels)  # Label for the 'ood' class
 
         return np.array(ood_data), ood_labels
 
@@ -62,13 +68,9 @@ class CIFAR10Extended(CIFAR10):
         is_ood_class = index >= len(self.data)
 
         if is_ood_class:
-            img, target = (
-                self.ood_data[index - len(self.data)],
-                self.ood_labels[index - len(self.data)],
-            )
-        else:
-            img, target = self.data[index], self.targets[index]
-            img = Image.fromarray(img)
+            print("Index exceeded 50000")
+        img, target = self.data[index], self.targets[index]
+        img = Image.fromarray((img * 255).astype(np.uint8))
 
         if self.transform is not None and index < len(self.data):
             img = self.transform(img)
@@ -76,9 +78,7 @@ class CIFAR10Extended(CIFAR10):
         if self.target_transform is not None:
             target = self.target_transform(target)
 
-        # Return image, numeric label, and class name
-        class_name = self.classes[target]
-        return img, target, class_name
+        return img, target
 
     def __len__(self):
-        return super().__len__() + len(self.ood_data)
+        return super().__len__()
