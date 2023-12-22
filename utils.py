@@ -10,6 +10,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.init as init
+import sklearn.metrics
 
 
 def get_mean_and_std(dataset):
@@ -128,3 +129,10 @@ def format_time(seconds):
     if f == "":
         f = "0ms"
     return f
+
+
+def calculate_auroc(known_class_logits, unknown_class_logits):
+    y_true = [1] * len(known_class_logits) + [0] * len(unknown_class_logits)
+    y_hat = known_class_logits + unknown_class_logits
+    fpr, tpr, thresholds = sklearn.metrics.roc_curve(y_true, y_hat, pos_label=1)
+    return sklearn.metrics.auc(fpr, tpr)
