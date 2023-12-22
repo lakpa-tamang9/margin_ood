@@ -58,11 +58,13 @@ val_dataset = CIFAR10Extended(
 )
 
 # Use DataLoader to iterate over the dataset
-trainloader = torch.utils.data.DataLoader(train_dataset, batch_size=64, shuffle=True)
-val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=64, shuffle=True)
+trainloader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=True)
+val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=128, shuffle=True)
 
 # Load model
 net = ResNet18()
+net = nn.DataParallel(net)
+net.to(device)
 
 criterion = MarginLoss()
 optimizer = torch.optim.SGD(
@@ -165,4 +167,4 @@ for epoch in range(start_epoch, 100):
     begin_epoch = time.time()
 
     train(epoch=epoch)
-    test()
+    test(epoch=epoch)
