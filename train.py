@@ -25,7 +25,7 @@ np.random.seed(1)
 
 std = [x / 255 for x in [63.0, 62.1, 66.7]]
 mean = [x / 255 for x in [125.3, 123.0, 113.9]]
-
+use_class_weighting = False
 # Define your train and val transformations
 train_transform = trn.Compose(
     [
@@ -66,7 +66,15 @@ net = ResNet18()
 net = nn.DataParallel(net)
 net.to(device)
 
-criterion = MarginLoss()
+# Add class_weights
+if use_class_weighting:
+    weights = [1] * 11
+    weights[-1] *= 1.4
+    class_weights = torch.tensor(weights)
+else:
+    class_weights = None
+
+criterion = MarginLoss(class_weights)
 optimizer = torch.optim.SGD(
     net.parameters(),
     0.001,
