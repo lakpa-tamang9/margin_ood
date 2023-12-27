@@ -4,12 +4,10 @@ import torch.nn.functional as F
 
 
 class MarginLoss(nn.Module):
-    def __init__(self):
-        super(MarginLoss, self).__init__()
-        weights = [1] * 11
-        weights[-1] *= 1.4
-        self.class_weights = torch.tensor(weights)
-        self.margin = 0.4
+    def __init__(self, weights):
+        super(MarginLoss, self).__init__(weights)
+        self.class_weights = weights
+        self.margin = 0.0
 
     def forward(self, inputs, targets, ood_class_idx):
         if self.class_weights is not None:
