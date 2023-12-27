@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 class MarginLoss(nn.Module):
     def __init__(self, weights):
-        super(MarginLoss, self).__init__(weights)
+        super(MarginLoss, self).__init__()
         self.class_weights = weights
         self.margin = 0.0
 
