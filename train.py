@@ -81,7 +81,23 @@ optimizer = torch.optim.SGD(
     momentum=0.9,
     weight_decay=5e-6,
 )
+epochs = 100
+lr = 0.001
 
+
+def cosine_annealing(step, total_steps, lr_max, lr_min):
+    return lr_min + (lr_max - lr_min) * 0.5 * (1 + np.cos(step / total_steps * np.pi))
+
+
+scheduler = torch.optim.lr_scheduler.LambdaLR(
+    optimizer,
+    lr_lambda=lambda step: cosine_annealing(
+        step,
+        epochs * len(trainloader),
+        1,  # since lr_lambda computes multiplicative factor
+        1e-6 / lr,
+    ),
+)
 
 start_epoch = 0
 best_acc = 0
