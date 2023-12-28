@@ -150,13 +150,13 @@ def train(epoch):
 
         total += targets.size(0)
         train_acc = 100.0 * correct / total
+        losses = loss_avg / (batch_idx + 1)
         progress_bar(
             batch_idx,
             len(trainloader),
-            "Loss: %.3f | Acc: %.3f%% (%d/%d)"
-            % (loss_avg / (batch_idx + 1), train_acc, correct, total),
+            "Loss: %.3f | Acc: %.3f%% (%d/%d)" % (losses, train_acc, correct, total),
         )
-    return loss_avg, train_acc
+    return losses, train_acc
 
 
 def test(epoch):
@@ -175,13 +175,13 @@ def test(epoch):
             _, predicted = outputs.max(1)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
-
+            losses = test_loss / (batch_idx + 1)
             progress_bar(
                 batch_idx,
                 len(val_loader),
                 "Loss: %.3f | Acc: %.3f%% (%d/%d)"
                 % (
-                    test_loss / (batch_idx + 1),
+                    losses,
                     100.0 * correct / total,
                     correct,
                     total,
@@ -201,12 +201,12 @@ def test(epoch):
             os.mkdir("checkpoint")
         torch.save(state, "./checkpoint/ckpt.pth")
         best_acc = acc
-    return test_loss, acc
+    return losses, acc
 
 
 # Main loop
 metrics = []
-for epoch in range(start_epoch, 100):
+for epoch in range(start_epoch, epochs):
     begin_epoch = time.time()
 
     train_loss, train_acc = train(epoch=epoch)
