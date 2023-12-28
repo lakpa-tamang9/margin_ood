@@ -25,7 +25,7 @@ np.random.seed(1)
 
 std = [x / 255 for x in [63.0, 62.1, 66.7]]
 mean = [x / 255 for x in [125.3, 123.0, 113.9]]
-
+use_class_weighting = False
 # Define your train and val transformations
 train_transform = trn.Compose(
     [
@@ -58,20 +58,46 @@ val_dataset = CIFAR10Extended(
 )
 
 # Use DataLoader to iterate over the dataset
-trainloader = torch.utils.data.DataLoader(train_dataset, batch_size=64, shuffle=True)
-val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=64, shuffle=True)
+trainloader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=True)
+val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=128, shuffle=True)
 
 # Load model
 net = ResNet18()
+net = nn.DataParallel(net)
+net.to(device)
 
-criterion = MarginLoss()
+# Add class_weights
+if use_class_weighting:
+    weights = [1] * 11
+    weights[-1] *= 1.4
+    class_weights = torch.tensor(weights)
+else:
+    class_weights = None
+
+criterion = MarginLoss(class_weights)
 optimizer = torch.optim.SGD(
     net.parameters(),
     0.001,
     momentum=0.9,
     weight_decay=5e-6,
 )
+epochs = 100
+lr = 0.001
 
+
+def cosine_annealing(step, total_steps, lr_max, lr_min):
+    return lr_min + (lr_max - lr_min) * 0.5 * (1 + np.cos(step / total_steps * np.pi))
+
+
+scheduler = torch.optim.lr_scheduler.LambdaLR(
+    optimizer,
+    lr_lambda=lambda step: cosine_annealing(
+        step,
+        epochs * len(trainloader),
+        1,  # since lr_lambda computes multiplicative factor
+        1e-6 / lr,
+    ),
+)
 
 start_epoch = 0
 best_acc = 0
@@ -165,4 +191,4 @@ for epoch in range(start_epoch, 100):
     begin_epoch = time.time()
 
     train(epoch=epoch)
-    test()
+    test(epoch=epoch)
