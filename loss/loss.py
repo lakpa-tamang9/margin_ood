@@ -4,10 +4,10 @@ import torch.nn.functional as F
 
 
 class MarginLoss(nn.Module):
-    def __init__(self, weights):
+    def __init__(self, weights, margin):
         super(MarginLoss, self).__init__()
         self.class_weights = weights
-        self.margin = 0.0
+        self.margin = margin
 
     def forward(self, inputs, targets, ood_class_idx, test=False):
         if self.class_weights is not None:
