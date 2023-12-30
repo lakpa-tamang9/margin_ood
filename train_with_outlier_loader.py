@@ -241,8 +241,8 @@ def test(epoch):
 
 
 # Main loop
-metrics = []
 for margin in [0.1, 0.2, 0.3, 0.4, 0.5]:
+    metrics = []
     for epoch in range(start_epoch, epochs):
         begin_epoch = time.time()
         criterion = MarginLoss(weights=class_weights, margin=margin)
