@@ -112,7 +112,7 @@ if use_class_weighting:
 else:
     class_weights = None
 
-criterion = MarginLoss(class_weights)
+# criterion = MarginLoss(class_weights, margin)
 optimizer = torch.optim.SGD(
     net.parameters(),
     0.001,
@@ -181,7 +181,7 @@ def train(epoch):
         train_loss += loss.item()
         loss_avg = loss_avg * 0.8 + float(train_loss) * 0.2
         _, predicted = outputs.max(1)
-        total += in_set[1].size(0)
+        total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
 
         train_acc = 100.0 * correct / total
@@ -196,6 +196,7 @@ def train(epoch):
 
 def test(epoch):
     global best_acc
+    global margin
     net.eval()
     test_loss = 0
     correct = 0
@@ -234,21 +235,23 @@ def test(epoch):
         }
         if not os.path.isdir("checkpoint"):
             os.mkdir("checkpoint")
-        torch.save(state, "./checkpoint/{}.pth".format(args.exp_name))
+        torch.save(state, "./checkpoint/{}_margin_{}.pth".format(args.exp_name, margin))
         best_acc = acc
     return losses, acc
 
 
 # Main loop
 metrics = []
-for epoch in range(start_epoch, epochs):
-    begin_epoch = time.time()
+for margin in [0.1, 0.2, 0.3, 0.4, 0.5]:
+    for epoch in range(start_epoch, epochs):
+        begin_epoch = time.time()
+        criterion = MarginLoss(weights=class_weights, margin=margin)
+        print(f"Training with margin {margin}")
+        train_loss, train_acc = train(epoch=epoch)
+        test_loss, test_acc = test(epoch=epoch)
+        metrics.append([train_loss, test_loss, train_acc, test_acc])
 
-    train_loss, train_acc = train(epoch=epoch)
-    test_loss, test_acc = test(epoch=epoch)
-    metrics.append([train_loss, test_loss, train_acc, test_acc])
-
-with open("logs/{}.csv".format(args.exp_name), "w") as f:
-    csvwriter = csv.writer(f)
-    csvwriter.writerow(["train_loss", "test_loss", "train_acc", "test_acc"])
-    csvwriter.writerows(metrics)
+    with open("logs/{}_margin_{}.csv".format(args.exp_name, margin), "w") as f:
+        csvwriter = csv.writer(f)
+        csvwriter.writerow(["train_loss", "test_loss", "train_acc", "test_acc"])
+        csvwriter.writerows(metrics)
