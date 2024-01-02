@@ -171,7 +171,17 @@ def train(epoch):
         optimizer.zero_grad()
 
         # loss
-        loss = criterion(outputs, targets, ood_class_idx)
+        # loss = criterion(outputs, targets, ood_class_idx)
+        # todo: remove the below code
+        loss = F.cross_entropy(outputs[: len(in_set[0])], target)
+        # cross-entropy from softmax distribution to uniform distribution
+        loss += (
+            0.5
+            * -(
+                outputs[len(in_set[0]) :].mean(1)
+                - torch.logsumexp(outputs[len(in_set[0]) :], dim=1)
+            ).mean()
+        )
 
         loss.backward()
         optimizer.step()
@@ -205,7 +215,8 @@ def test(epoch):
         for batch_idx, (inputs, targets) in enumerate(test_loader):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = net(inputs)
-            loss = criterion(outputs, targets, ood_class_idx, test=True)
+            # loss = criterion(outputs, targets, ood_class_idx, test=True)
+            loss = F.cross_entropy(outputs, targets)
 
             test_loss += loss.item()
             _, predicted = outputs.max(1)
