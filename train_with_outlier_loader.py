@@ -158,9 +158,9 @@ def train(epoch):
         zip(train_loader_in, train_loader_out)
     ):
         data = torch.cat((in_set[0], out_set[0]), 0)
-        out_sets = torch.tensor([ood_class_idx] * len(out_set[1])).unsqueeze(1)
-        in_sets = in_set[1].unsqueeze(1)
-        targets = torch.cat((in_sets, out_sets), 0).squeeze(1)
+        # out_sets = torch.tensor([ood_class_idx] * len(out_set[1])).unsqueeze(1)
+        # in_sets = in_set[1].unsqueeze(1)
+        targets = in_set[1]
 
         inputs, targets = data.to(device), targets.to(device)
 
