@@ -173,7 +173,7 @@ def train(epoch):
         # loss
         # loss = criterion(outputs, targets, ood_class_idx)
         # todo: remove the below code
-        loss = F.cross_entropy(outputs[: len(in_set[0])], target)
+        loss = F.cross_entropy(outputs[: len(in_set[0])], targets)
         # cross-entropy from softmax distribution to uniform distribution
         loss += (
             0.5
