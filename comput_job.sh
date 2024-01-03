@@ -6,7 +6,7 @@
 #SBATCH --time=5:00:00        #Time Limit
 #SBATCH --mem=40536
 #SBATCH --output=oe_hendrycks_etal.log #Standard output and error log
-#SBATCH --mail-user=tboonesifuentes@deakin.edu.au
+#SBATCH --mail-user=s223127906@deakin.edu.au
 #SBATCH --mail-type=ALL
  
 python /Users/lakpa/devs/deakin/research/development/margin_ood/train_with_outlier_loader.py
