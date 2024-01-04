@@ -87,7 +87,7 @@ train_loader_in = torch.utils.data.DataLoader(
 
 train_loader_out = torch.utils.data.DataLoader(
     ood_data,
-    batch_size=batch_size,
+    batch_size=oe_batch_size,
     shuffle=False,
     pin_memory=True,
 )
@@ -192,7 +192,7 @@ def train(epoch):
         loss_avg = loss_avg * 0.8 + float(train_loss) * 0.2
         _, predicted = outputs.max(1)
         total += targets.size(0)
-        correct += predicted.eq(targets).sum().item()
+        correct += predicted[: len(in_set[0])].eq(targets).sum().item()
 
         train_acc = 100.0 * correct / total
         losses = loss_avg / (batch_idx + 1)
