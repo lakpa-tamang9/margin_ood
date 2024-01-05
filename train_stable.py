@@ -296,12 +296,7 @@ for margin in [0.1, 0.2, 0.3, 0.4, 0.5]:
     with open(
         os.path.join(
             logs_dir,
-            args.dataset
-            + "_"
-            + args.model
-            + args.exp_name
-            + f"_{margin}"
-            + "results.csv",
+            args.dataset + "_" + args.exp_name + f"_{margin}_" + "results.csv",
         ),
         "w",
     ) as f:
@@ -324,9 +319,8 @@ for margin in [0.1, 0.2, 0.3, 0.4, 0.5]:
                     checkpoint_dir,
                     args.dataset
                     + "_"
-                    + args.model
                     + args.exp_name
-                    + f"_{margin}"
+                    + f"_{margin}_"
                     + "ckpt"
                     + str(epoch)
                     + ".pt",
@@ -338,12 +332,7 @@ for margin in [0.1, 0.2, 0.3, 0.4, 0.5]:
         with open(
             os.path.join(
                 logs_dir,
-                args.dataset
-                + "_"
-                + args.model
-                + args.exp_name
-                + f"_{margin}"
-                + "results.csv",
+                args.dataset + "_" + args.exp_name + f"_{margin}_" + "results.csv",
             ),
             "a",
         ) as f:
