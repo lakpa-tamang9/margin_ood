@@ -13,10 +13,23 @@ import csv
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+parser = argparse.ArgumentParser(
+    description="Testing",
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+)
+parser.add_argument(
+    "--exp_name",
+    "-en",
+    type=str,
+    required=True,
+)
+args = parser.parse_args()
+
 test_bs = 200
 num_to_avg = 1
 out_as_pos = True
 dataset = "cifar10"
+model = "resnet"
 
 std = [x / 255 for x in [63.0, 62.1, 66.7]]
 mean = [x / 255 for x in [125.3, 123.0, 113.9]]
@@ -160,10 +173,13 @@ def get_results(ood_loader, in_score, num_to_avg=num_to_avg):
 
 
 # Restore model
-net = ResNet18()
-learning_model = "resnet18"
-# net = WideResNet(depth=40, num_classes=10, widen_factor=2, dropRate=0.3)
-# learning_model = "wideresnet"
+if model == "resnet18":
+    net = ResNet18()
+else:
+    net = WideResNet(depth=40, num_classes=10, widen_factor=2, dropRate=0.3)
+
+net.to(device)
+
 # OOD loaders for test ood datasets
 ood_loaders = {
     "lsunc": lsunc_loader,
@@ -174,13 +190,11 @@ ood_loaders = {
     "places_365": places365_loader,
 }
 metrics = []
-for i in range(1):
+for i in range(1, 6):
     margin = i / 10
-    # model_path = (
-    #     f"checkpoint/{dataset}/{learning_model}/32imgnet_oe_margin_{margin}.pth"
-    # )
-    model_path = "hendrycks_method/resnet/cifar10_resnet_oe_tune_epoch_99.pt"
-
+    model_path = "checkpoint/{}/{}_{}_{}_ckpt99.pt".format(
+        model, dataset, args.exp_name, margin
+    )
     net.load_state_dict(torch.load(model_path))
     net.to(device)
     net.eval()
@@ -190,10 +204,16 @@ for i in range(1):
     # print(f"The id accuracy is {id_accuracy} %")
     for ood_name, ood_loader in ood_loaders.items():
         auroc, aupr, fpr = get_results(ood_loader, in_score)
-        print(f"Margin {margin} with {ood_name} ood, results : {[auroc, aupr, fpr]}")
+        print(f"Margin {margin} with {ood_name} ood, metrics : {[auroc, aupr, fpr]}")
         metrics.append([margin, ood_name, auroc, aupr, fpr])
 
-with open("logs/results/{}_{}_result.csv".format(dataset, learning_model), "w") as f:
+output_metrics_dir = os.path.join("./logs", "output_metrics")
+if not os.path.exists(output_metrics_dir):
+    os.makedirs(output_metrics_dir)
+
+with open(
+    "{}/{}_{}_{}.csv".format(output_metrics_dir, model, dataset, args.exp_name), "w"
+) as f:
     csvwriter = csv.writer(f)
     csvwriter.writerow(["margin", "ood_dataset", "auroc", "aupr", "fpr"])
     csvwriter.writerows(metrics)
