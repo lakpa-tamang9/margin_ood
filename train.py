@@ -17,15 +17,30 @@ from torchvision import transforms
 from datasets.cifar10 import CIFAR10Extended
 from loss.loss import MarginLoss
 from utils import *
+import argparse
+import csv
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 torch.manual_seed(1)
 np.random.seed(1)
 
+
+parser = argparse.ArgumentParser(description="Margin OOD")
+parser.add_argument(
+    "--exp_name",
+    "-en",
+    type=str,
+    default=None,
+    required=True,
+    help="Folder to save checkpoints.",
+)
+
+args = parser.parse_args()
+
 std = [x / 255 for x in [63.0, 62.1, 66.7]]
 mean = [x / 255 for x in [125.3, 123.0, 113.9]]
-
+use_class_weighting = False
 # Define your train and val transformations
 train_transform = trn.Compose(
     [
@@ -66,28 +81,53 @@ net = ResNet18()
 net = nn.DataParallel(net)
 net.to(device)
 
-criterion = MarginLoss()
+# Add class_weights
+if use_class_weighting:
+    weights = [1] * 11
+    weights[-1] *= 1.4
+    class_weights = torch.tensor(weights)
+else:
+    class_weights = None
+
+criterion = MarginLoss(class_weights)
 optimizer = torch.optim.SGD(
     net.parameters(),
     0.001,
     momentum=0.9,
     weight_decay=5e-6,
 )
+epochs = 100
+lr = 0.001
 
+
+def cosine_annealing(step, total_steps, lr_max, lr_min):
+    return lr_min + (lr_max - lr_min) * 0.5 * (1 + np.cos(step / total_steps * np.pi))
+
+
+scheduler = torch.optim.lr_scheduler.LambdaLR(
+    optimizer,
+    lr_lambda=lambda step: cosine_annealing(
+        step,
+        epochs * len(trainloader),
+        1,  # since lr_lambda computes multiplicative factor
+        1e-6 / lr,
+    ),
+)
 
 start_epoch = 0
 best_acc = 0
+ood_class_idx = 10
 
 
 # Training
 def train(epoch):
+    global ood_class_idx
     print("\nEpoch: %d" % epoch)
     net.train()
     train_loss = 0
     loss_avg = 0
     correct = 0
     total = 0
-    ood_class_idx = 10
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(device), targets.to(device)
         # convert from original dataset label to known class label
@@ -104,18 +144,19 @@ def train(epoch):
 
         train_loss += loss.item()
         loss_avg = loss_avg * 0.8 + float(train_loss) * 0.2
-
         _, predicted = outputs.max(1)
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
 
         total += targets.size(0)
+        train_acc = 100.0 * correct / total
+        losses = loss_avg / (batch_idx + 1)
         progress_bar(
             batch_idx,
             len(trainloader),
-            "Loss: %.3f | Acc: %.3f%% (%d/%d)"
-            % (train_loss / (batch_idx + 1), 100.0 * correct / total, correct, total),
+            "Loss: %.3f | Acc: %.3f%% (%d/%d)" % (losses, train_acc, correct, total),
         )
+    return losses, train_acc
 
 
 def test(epoch):
@@ -128,19 +169,19 @@ def test(epoch):
         for batch_idx, (inputs, targets) in enumerate(val_loader):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = net(inputs)
-            loss = criterion(outputs, targets)
+            loss = criterion(outputs, targets, ood_class_idx)
 
             test_loss += loss.item()
             _, predicted = outputs.max(1)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
-
+            losses = test_loss / (batch_idx + 1)
             progress_bar(
                 batch_idx,
                 len(val_loader),
                 "Loss: %.3f | Acc: %.3f%% (%d/%d)"
                 % (
-                    test_loss / (batch_idx + 1),
+                    losses,
                     100.0 * correct / total,
                     correct,
                     total,
@@ -160,11 +201,19 @@ def test(epoch):
             os.mkdir("checkpoint")
         torch.save(state, "./checkpoint/ckpt.pth")
         best_acc = acc
+    return losses, acc
 
 
 # Main loop
-for epoch in range(start_epoch, 100):
+metrics = []
+for epoch in range(start_epoch, epochs):
     begin_epoch = time.time()
 
-    train(epoch=epoch)
-    test(epoch=epoch)
+    train_loss, train_acc = train(epoch=epoch)
+    test_loss, test_acc = test(epoch=epoch)
+    metrics.append([train_loss, test_loss, train_acc, test_acc])
+
+with open("logs/{}.csv".format(args.exp_name), "w") as f:
+    csvwriter = csv.writer(f)
+    csvwriter.writerow(["train_loss", "test_loss", "train_acc", "test_acc"])
+    csvwriter.writerows(metrics)
