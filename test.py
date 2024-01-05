@@ -6,14 +6,14 @@ import torch.backends.cudnn as cudnn
 import torchvision.transforms as trn
 import torchvision.datasets as dset
 import torch.nn.functional as F
-
+from models.wrn import WideResNet
 from models.resnet import ResNet18
 from utils import *
 import csv
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-test_bs = 128
+test_bs = 200
 num_to_avg = 1
 out_as_pos = True
 dataset = "cifar10"
@@ -68,7 +68,8 @@ test_loader = torch.utils.data.DataLoader(
     test_data,
     batch_size=test_bs,
     shuffle=False,
-    pin_memory=False,
+    num_workers=4,
+    pin_memory=True,
 )
 
 texture_loader = torch.utils.data.DataLoader(
@@ -99,16 +100,16 @@ concat = lambda x: np.concatenate(x, axis=0)
 to_np = lambda x: x.data.cpu().numpy()
 
 
-def get_scores(loader, calc_id_acc=False):
+def get_scores(loader, calc_id_acc=False, in_dist=False):
     _score = []
     acc = []
     correct = 0
     total = 0
     net.eval()
     with torch.no_grad():
-        for _, (data, targets) in enumerate(loader):
-            # if batch_idx >= ood_num_examples // test_bs and in_dist is False:
-            #     break
+        for batch_idx, (data, targets) in enumerate(loader):
+            if batch_idx >= ood_num_examples // test_bs and in_dist is False:
+                break
             data, targets = data.to(device), targets.to(device)
             output = net(data)
 
@@ -128,9 +129,9 @@ def get_scores(loader, calc_id_acc=False):
     ood_score = concat(_score)
 
     if calc_id_acc:
-        return ood_score.copy(), mean_acc
+        return ood_score[:ood_num_examples].copy(), mean_acc
     else:
-        return ood_score.copy()
+        return ood_score[:ood_num_examples].copy()
 
 
 def calc_accuracy(X, true_labels):
@@ -161,6 +162,8 @@ def get_results(ood_loader, in_score, num_to_avg=num_to_avg):
 # Restore model
 net = ResNet18()
 learning_model = "resnet18"
+# net = WideResNet(depth=40, num_classes=10, widen_factor=2, dropRate=0.3)
+# learning_model = "wideresnet"
 # OOD loaders for test ood datasets
 ood_loaders = {
     "lsunc": lsunc_loader,
@@ -171,18 +174,17 @@ ood_loaders = {
     "places_365": places365_loader,
 }
 metrics = []
-for i in range(5, 6):
+for i in range(1):
     margin = i / 10
-    model_path = (
-        f"checkpoint/{dataset}/{learning_model}/32imgnet_oe_margin_{margin}.pth"
-    )
+    # model_path = (
+    #     f"checkpoint/{dataset}/{learning_model}/32imgnet_oe_margin_{margin}.pth"
+    # )
+    model_path = "hendrycks_method/resnet/cifar10_resnet_oe_tune_epoch_99.pt"
 
-    net.load_state_dict(
-        torch.load(model_path, map_location=torch.device(device)), strict=False
-    )
+    net.load_state_dict(torch.load(model_path))
     net.to(device)
     net.eval()
-    in_score, accuracy = get_scores(test_loader, calc_id_acc=True)
+    in_score, accuracy = get_scores(test_loader, calc_id_acc=True, in_dist=True)
     print(accuracy)
     # id_accuracy = get_id_acc(cifar_loader)
     # print(f"The id accuracy is {id_accuracy} %")

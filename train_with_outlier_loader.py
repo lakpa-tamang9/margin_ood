@@ -12,6 +12,7 @@ import torchvision.datasets as dset
 import torch.nn.functional as F
 from tqdm import tqdm
 from models.resnet import ResNet18
+from models.wrn import WideResNet
 from datasets.aggressive_aug import DoTransform
 from torchvision import transforms
 from dataset_utils.resized_imagenet_loader import ImageNetDownSample
@@ -37,7 +38,6 @@ parser.add_argument(
     "-en",
     type=str,
     default=None,
-    required=True,
     help="Folder to save checkpoints.",
 )
 
@@ -101,6 +101,7 @@ test_loader = torch.utils.data.DataLoader(
 
 # Load model
 net = ResNet18()
+# net = WideResNet(depth=40, num_classes=10, widen_factor=2)
 net = nn.DataParallel(net)
 net.to(device)
 
@@ -142,6 +143,21 @@ best_acc = 0
 ood_class_idx = 10
 
 
+def OE_mixup(x_in, x_out, alpha=10.0):
+    if x_in.size()[0] != x_out.size()[0]:
+        length = min(x_in.size()[0], x_out.size()[0])
+        x_in = x_in[:length]
+        x_out = x_out[:length]
+    lam = np.random.beta(alpha, alpha)
+    x_oe = lam * x_in + (1 - lam) * x_out
+    return x_oe
+
+
+num_classes = 10
+
+state = {}
+
+
 # Training
 def train(epoch):
     global ood_class_idx
@@ -157,12 +173,19 @@ def train(epoch):
     for batch_idx, (in_set, out_set) in enumerate(
         zip(train_loader_in, train_loader_out)
     ):
-        data = torch.cat((in_set[0], out_set[0]), 0)
-        # out_sets = torch.tensor([ood_class_idx] * len(out_set[1])).unsqueeze(1)
-        # in_sets = in_set[1].unsqueeze(1)
+        in_oe = OE_mixup(in_set[0], out_set[0])
+        data = torch.cat((in_set[0], in_oe), 0)
         targets = in_set[1]
+        target_oe = torch.LongTensor(in_oe.shape[0]).random_(
+            num_classes, num_classes + 1
+        )
+        # print(target_oe.shape)
 
-        inputs, targets = data.to(device), targets.to(device)
+        inputs, targets, target_oe = (
+            data.to(device),
+            targets.to(device),
+            target_oe.to(device),
+        )
 
         optimizer.zero_grad()
         outputs = net(inputs)
@@ -171,17 +194,7 @@ def train(epoch):
         optimizer.zero_grad()
 
         # loss
-        # loss = criterion(outputs, targets, ood_class_idx)
-        # todo: remove the below code
-        loss = F.cross_entropy(outputs[: len(in_set[0])], targets)
-        # cross-entropy from softmax distribution to uniform distribution
-        loss += (
-            0.5
-            * -(
-                outputs[len(in_set[0]) :].mean(1)
-                - torch.logsumexp(outputs[len(in_set[0]) :], dim=1)
-            ).mean()
-        )
+        loss = criterion(outputs, targets, target_oe)
 
         loss.backward()
         optimizer.step()
@@ -189,13 +202,14 @@ def train(epoch):
         scheduler.step()
 
         train_loss += loss.item()
-        loss_avg = loss_avg * 0.8 + float(train_loss) * 0.2
+        # loss_avg = loss_avg * 0.8 + float(train_loss) * 0.2
+        # print(train_loss)
         _, predicted = outputs.max(1)
         total += targets.size(0)
         correct += predicted[: len(in_set[0])].eq(targets).sum().item()
 
         train_acc = 100.0 * correct / total
-        losses = loss_avg / (batch_idx + 1)
+        losses = train_loss / (batch_idx + 1)
         progress_bar(
             batch_idx,
             len(train_loader_in),
@@ -209,6 +223,7 @@ def test(epoch):
     global margin
     net.eval()
     test_loss = 0
+    loss_avg = 0.0
     correct = 0
     total = 0
     with torch.no_grad():
@@ -218,11 +233,13 @@ def test(epoch):
             # loss = criterion(outputs, targets, ood_class_idx, test=True)
             loss = F.cross_entropy(outputs, targets)
 
-            test_loss += loss.item()
-            _, predicted = outputs.max(1)
+            predicted = outputs.data.max(1)[1]
+            correct += predicted.eq(targets.data).sum().item()
+
+            loss_avg += float(loss.data)
+
             total += targets.size(0)
-            correct += predicted.eq(targets).sum().item()
-            losses = test_loss / (batch_idx + 1)
+            losses = loss_avg / (batch_idx + 1)
             progress_bar(
                 batch_idx,
                 len(test_loader),
@@ -246,13 +263,14 @@ def test(epoch):
         }
         if not os.path.isdir("checkpoint"):
             os.mkdir("checkpoint")
-        torch.save(state, "./checkpoint/{}_margin_{}.pth".format(args.exp_name, margin))
+        torch.save(state, "./checkpoint/{}_margin_{}.pt".format(args.exp_name, margin))
         best_acc = acc
     return losses, acc
 
 
 # Main loop
-for margin in [0.1, 0.2, 0.3, 0.4, 0.5]:
+# for margin in [0.1, 0.2, 0.3, 0.4, 0.5]:
+for margin in [0.3]:
     metrics = []
     for epoch in range(start_epoch, epochs):
         begin_epoch = time.time()

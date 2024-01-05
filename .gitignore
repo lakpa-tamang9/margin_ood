@@ -11,6 +11,7 @@ __pycache__/
 build/
 develop-eggs/
 checkpoint/
+hendrycks_method/
 logs/
 dist/
 data/
