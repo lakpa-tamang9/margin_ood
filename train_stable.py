@@ -206,9 +206,6 @@ def OE_mixup(x_in, x_out, alpha=10.0):
     return x_oe
 
 
-criterion = MarginLoss(weights=None, margin=0.2)
-
-
 def train():
     net.train()  # enter train mode
     loss_avg = 0.0
@@ -292,68 +289,81 @@ for dir in [logs_dir, checkpoint_dir]:
         raise Exception("%s is not a dir" % dir)
 
 
-with open(
-    os.path.join(
-        logs_dir,
-        args.dataset + "_" + args.model + args.exp_name + "results.csv",
-    ),
-    "w",
-) as f:
-    f.write("epoch,time(s),train_loss,test_loss,test_error(%)\n")
-
 print("Beginning Training\n")
 
 # Main loop
-for epoch in range(0, args.epochs):
-    state["epoch"] = epoch
+for margin in [0.1, 0.2, 0.3, 0.4, 0.5]:
+    with open(
+        os.path.join(
+            logs_dir,
+            args.dataset
+            + "_"
+            + args.model
+            + args.exp_name
+            + f"_{margin}"
+            + "results.csv",
+        ),
+        "w",
+    ) as f:
+        f.write("epoch,time(s),train_loss,test_loss,test_error(%)\n")
+    metrics = []
+    for epoch in range(0, args.epochs):
+        state["epoch"] = epoch
+        criterion = MarginLoss(weights=None, margin=margin)
 
-    begin_epoch = time.time()
+        begin_epoch = time.time()
 
-    train()
-    test()
+        train()
+        test()
 
-    # Save model
-    if epoch == args.epochs - 1:
-        torch.save(
-            net.state_dict(),
+        # Save model
+        if epoch == args.epochs - 1:
+            torch.save(
+                net.state_dict(),
+                os.path.join(
+                    checkpoint_dir,
+                    args.dataset
+                    + "_"
+                    + args.model
+                    + args.exp_name
+                    + f"_{margin}"
+                    + "ckpt"
+                    + str(epoch)
+                    + ".pt",
+                ),
+            )
+
+        # Show results
+
+        with open(
             os.path.join(
-                checkpoint_dir,
+                logs_dir,
                 args.dataset
                 + "_"
                 + args.model
                 + args.exp_name
-                + "ckpt"
-                + str(epoch)
-                + ".pt",
+                + f"_{margin}"
+                + "results.csv",
             ),
-        )
+            "a",
+        ) as f:
+            f.write(
+                "%03d,%05d,%0.6f,%0.5f,%0.2f\n"
+                % (
+                    (epoch + 1),
+                    time.time() - begin_epoch,
+                    state["train_loss"],
+                    state["test_loss"],
+                    100 - 100.0 * state["test_accuracy"],
+                )
+            )
 
-    # Show results
-
-    with open(
-        os.path.join(
-            logs_dir,
-            args.dataset + "_" + args.model + args.exp_name + "results.csv",
-        ),
-        "a",
-    ) as f:
-        f.write(
-            "%03d,%05d,%0.6f,%0.5f,%0.2f\n"
-            % (
+        print(
+            "Epoch {0:3d} | Time {1:5d} | Train Loss {2:.4f} | Test Loss {3:.3f} | Test Error {4:.2f}".format(
                 (epoch + 1),
-                time.time() - begin_epoch,
+                int(time.time() - begin_epoch),
                 state["train_loss"],
                 state["test_loss"],
                 100 - 100.0 * state["test_accuracy"],
             )
         )
-
-    print(
-        "Epoch {0:3d} | Time {1:5d} | Train Loss {2:.4f} | Test Loss {3:.3f} | Test Error {4:.2f}".format(
-            (epoch + 1),
-            int(time.time() - begin_epoch),
-            state["train_loss"],
-            state["test_loss"],
-            100 - 100.0 * state["test_accuracy"],
-        )
-    )
