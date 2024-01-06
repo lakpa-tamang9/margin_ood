@@ -173,7 +173,7 @@ def get_results(ood_loader, in_score, num_to_avg=num_to_avg):
 
 
 # Restore model
-if model == "resnet18":
+if model == "resnet":
     net = ResNet18()
 else:
     net = WideResNet(depth=40, num_classes=10, widen_factor=2, dropRate=0.3)
