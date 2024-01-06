@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from loss.loss import MarginLoss
 from dataset_utils.validation_dataset import validation_split
-from dataset_utils.numpy_loader import npy_loader
+from dataset_utils.randimages import RandomImages
 from models.resnet import ResNet18
 
 from models.wrn import WideResNet
@@ -89,7 +89,7 @@ parser.add_argument(
     default="",
     help="Checkpoint path to resume / test.",
 )
-parser.add_argument("--exp_name", "-en", type=str, required=True)
+parser.add_argument("--exp_name", "-en", default="test", type=str)
 parser.add_argument("--test", "-t", action="store_true", help="Test only flag.")
 # Acceleration
 parser.add_argument("--ngpu", type=int, default=1, help="0 = CPU.")
@@ -143,8 +143,18 @@ if args.outlier_name == "imgnet32":
         ),
     )
 elif args.outlier_name == "300k":
-    ood_data = dset.DatasetFolder(
-        root="./data/300K_random_images", loader=npy_loader, extensions=[".npy"]
+    ood_data = RandomImages(
+        transform=trn.Compose(
+            [
+                trn.ToTensor(),
+                trn.ToPILImage(),
+                trn.RandomCrop(32, padding=4),
+                trn.RandomHorizontalFlip(),
+                trn.ToTensor(),
+                trn.Normalize(mean, std),
+            ]
+        ),
+        data_num=10000,
     )
 
 train_loader_in = torch.utils.data.DataLoader(
@@ -228,10 +238,15 @@ def train():
     for batch_idx, (in_set, out_set) in enumerate(
         zip(train_loader_in, train_loader_out)
     ):
-        in_oe = OE_mixup(in_set[0], out_set[0])
-        data = torch.cat((in_set[0], in_oe), 0)
+        inset_tensor = in_set[0]
+        # if args.outlier_name == "300k":
+        #     out_set_tensor = torch.squeeze(out_set[0]).permute(0, 3, 1, 2)
+        # else:
+        out_set_tensor = out_set[0]
+        # in_oe = OE_mixup(inset_tensor, out_set_tensor)
+        data = torch.cat((inset_tensor, out_set_tensor), 0)
         targets = in_set[1]
-        target_oe = torch.LongTensor(in_oe.shape[0]).random_(
+        target_oe = torch.LongTensor(out_set_tensor.shape[0]).random_(
             num_classes, num_classes + 1
         )
 
