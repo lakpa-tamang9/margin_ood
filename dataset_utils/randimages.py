@@ -4,7 +4,7 @@ import numpy as np
 
 
 class RandomImages(torch.utils.data.Dataset):
-    def __init__(self, transform=None, exclude_cifar=True, data_num=10000):
+    def __init__(self, transform=None, exclude_cifar=True, data_num=300000):
         self.transform = transform
 
         self.data = np.load(

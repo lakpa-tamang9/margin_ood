@@ -154,7 +154,6 @@ elif args.outlier_name == "300k":
                 trn.Normalize(mean, std),
             ]
         ),
-        data_num=10000,
     )
 
 train_loader_in = torch.utils.data.DataLoader(
@@ -167,7 +166,7 @@ train_loader_in = torch.utils.data.DataLoader(
 
 train_loader_out = torch.utils.data.DataLoader(
     ood_data,
-    batch_size=args.oe_batch_size,
+    batch_size=args.batch_size,
     shuffle=False,
     num_workers=args.prefetch,
     pin_memory=True,
@@ -249,10 +248,11 @@ def train():
         target_oe = torch.LongTensor(out_set_tensor.shape[0]).random_(
             num_classes, num_classes + 1
         )
+        new_target = torch.cat((targets, target_oe), 0)
 
         inputs, targets, target_oe = (
             data.to(device),
-            targets.to(device),
+            new_target.to(device),
             target_oe.to(device),
         )
 
@@ -320,7 +320,7 @@ for dir in [logs_dir, checkpoint_dir]:
 print("Beginning Training\n")
 
 # Main loop
-for margin in [0.1, 0.2, 0.3, 0.4, 0.5]:
+for margin in [0.5]:
     with open(
         os.path.join(
             logs_dir,

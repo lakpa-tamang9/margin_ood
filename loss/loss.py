@@ -14,12 +14,13 @@ class MarginLoss(nn.Module):
             class_weights = torch.FloatTensor(self.class_weights).to(inputs.device)
         else:
             class_weights = None
-        loss = F.cross_entropy(inputs[: len(targets)], targets, weight=class_weights)
+        loss = F.cross_entropy(inputs, targets, weight=class_weights)
+        inputs = torch.nn.functional.softmax(input=inputs, dim=1)
 
         all_targets = torch.cat((targets, target_oe), 0)
         if not test:
-            ood_mask = all_targets == target_oe[0]
-            id_mask = all_targets != target_oe[0]
+            ood_mask = targets == target_oe[0]
+            id_mask = targets != target_oe[0]
 
             ood_score = inputs[ood_mask]
             # ood_score = inputs[ood_mask][:, target_oe]
