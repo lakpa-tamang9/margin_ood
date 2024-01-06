@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from loss.loss import MarginLoss
 from dataset_utils.validation_dataset import validation_split
-
+from dataset_utils.numpy_loader import npy_loader
 from models.resnet import ResNet18
 
 from models.wrn import WideResNet
@@ -37,6 +37,14 @@ parser.add_argument(
     default="resnet",
     choices=["resnet", "wrn"],
     help="Choose architecture.",
+)
+parser.add_argument(
+    "--outlier_name",
+    "-on",
+    type=str,
+    default="300k",
+    choices=["300k", "imgnet32"],
+    help="Choose the outlier data",
 )
 parser.add_argument(
     "--calibration",
@@ -120,19 +128,24 @@ else:
 
 train_data_in, val_data = validation_split(train_data_in, val_share=0.1)
 
-ood_data = ImageNetDownSample(
-    root="./data/ImageNet32",
-    transform=trn.Compose(
-        [
-            trn.ToTensor(),
-            trn.ToPILImage(),
-            trn.RandomCrop(32, padding=4),
-            trn.RandomHorizontalFlip(),
-            trn.ToTensor(),
-            trn.Normalize(mean, std),
-        ]
-    ),
-)
+if args.outlier_name == "imgnet32":
+    ood_data = ImageNetDownSample(
+        root="./data/ImageNet32",
+        transform=trn.Compose(
+            [
+                trn.ToTensor(),
+                trn.ToPILImage(),
+                trn.RandomCrop(32, padding=4),
+                trn.RandomHorizontalFlip(),
+                trn.ToTensor(),
+                trn.Normalize(mean, std),
+            ]
+        ),
+    )
+elif args.outlier_name == "300k":
+    ood_data = dset.DatasetFolder(
+        root="./data/300K_random_images", loader=npy_loader, extensions=[".npy"]
+    )
 
 train_loader_in = torch.utils.data.DataLoader(
     train_data_in,
