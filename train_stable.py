@@ -182,7 +182,7 @@ test_loader = torch.utils.data.DataLoader(
 
 # Create model
 if args.model == "resnet":
-    net = ResNet18()
+    net = ResNet18(num_classes=num_classes)
 else:
     net = WideResNet(
         args.layers, num_classes, args.widen_factor, dropRate=args.droprate
@@ -223,9 +223,24 @@ def OE_mixup(x_in, x_out, alpha=10.0):
         length = min(x_in.size()[0], x_out.size()[0])
         x_in = x_in[:length]
         x_out = x_out[:length]
+
+    mixed_input = MixUp(x_in, 10)
+    mixed_outlier = MixUp(x_out, 10)
     lam = np.random.beta(alpha, alpha)
-    x_oe = lam * x_in + (1 - lam) * x_out
-    return x_oe
+    mixed_in_oe = lam * mixed_input + (1 - lam) * mixed_outlier
+    return mixed_in_oe
+
+
+def MixUp(inputs, mix_size):
+    batch_size = inputs.size(0)
+    index = [torch.randperm(batch_size) for _ in range(mix_size)]
+
+    mixed_input = torch.zeros_like(inputs)
+    for i in range(batch_size):
+        for j in range(mix_size):
+            mixed_input[i] += inputs[index[j][i], :] / mix_size
+
+    return mixed_input
 
 
 def train():
@@ -237,33 +252,41 @@ def train():
     for batch_idx, (in_set, out_set) in enumerate(
         zip(train_loader_in, train_loader_out)
     ):
-        inset_tensor = in_set[0]
-        # if args.outlier_name == "300k":
-        #     out_set_tensor = torch.squeeze(out_set[0]).permute(0, 3, 1, 2)
-        # else:
-        out_set_tensor = out_set[0]
-        # in_oe = OE_mixup(inset_tensor, out_set_tensor)
-        data = torch.cat((inset_tensor, out_set_tensor), 0)
-        targets = in_set[1]
-        target_oe = torch.LongTensor(out_set_tensor.shape[0]).random_(
-            num_classes, num_classes + 1
-        )
-        new_target = torch.cat((targets, target_oe), 0)
+        inset_tensor = in_set[0].to(device)
+        out_set_tensor = out_set[0].to(device)
+        mixed_inputs = OE_mixup(inset_tensor, out_set_tensor)
 
-        inputs, targets, target_oe = (
-            data.to(device),
-            new_target.to(device),
-            target_oe.to(device),
-        )
+        data = torch.cat((inset_tensor, mixed_inputs), 0)
+        targets = in_set[1].to(device)
+
+        # Forward prop inputs
+        outputs = net(data)
 
         optimizer.zero_grad()
-        outputs = net(inputs)
 
-        # backprop
-        optimizer.zero_grad()
+        loss = F.cross_entropy(outputs[: len(inset_tensor)], targets)
+
+        loss += (
+            0.5
+            * -(
+                outputs[len(in_set[0]) :].mean(1)
+                - torch.logsumexp(outputs[len(in_set[0]) :], dim=1)
+            ).mean()
+        )
+
+        # confidence, _ = torch.max(torch.softmax(outputs, dim=1), dim=1)
+        # Forward prop mixed inputs
+        # mixed_outputs = net(mixed_inputs)
+        # mixed_confidence, _ = torch.max(torch.softmax(mixed_outputs, dim=1), dim=1)
 
         # loss
-        loss = criterion(outputs, targets, target_oe)
+        # loss = F.cross_entropy(outputs, targets)
+        # loss for mixed inputs
+        # mix_loss = F.cross_entropy(mixed_outputs, mixed_labels)
+        # margin_loss = torch.mean(
+        #     torch.clamp(margin - (confidence - mixed_confidence), min=0.0)
+        # )
+        # final_loss = loss + mix_loss
 
         loss.backward()
         optimizer.step()
