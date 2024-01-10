@@ -145,7 +145,7 @@ def evaluate():
     return results
 
 
-def test(model):
+def test():
     model.eval()
     loss = 0
     correct = 0
@@ -247,7 +247,6 @@ def train():
             "Loss: %.3f | Acc: %.3f%% (%d/%d)"
             % (losses, train_acc * 100, correct, total),
         )
-
 
 train_data = CIFAR10(root="data", train=True, download=True, transform=trans)
 train_loader = DataLoader(train_data, batch_size=128, num_workers=12)
