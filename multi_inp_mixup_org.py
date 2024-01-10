@@ -3,34 +3,25 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR10
 import numpy as np
-from pytorch_ood.dataset.img import (
-    LSUNCrop,
-    LSUNResize,
-    Textures,
-    TinyImageNetCrop,
-    TinyImageNetResize,
-    Places365,
-)
-from pytorch_ood.detector import (
-    ODIN,
-    EnergyBased,
-    Entropy,
-    KLMatching,
-    Mahalanobis,
-    MaxLogit,
-    MaxSoftmax,
-    ViM,
-    RMD,
-    DICE,
-    SHE,
-)
+from pytorch_ood.dataset.img import *
+import torch.nn as nn
+from pytorch_ood.detector import *
 from pytorch_ood.model import WideResNet
 from pytorch_ood.utils import OODMetrics, ToUnknown, fix_random_seed
 import os
 import csv
+import torch.optim as optim
 import argparse
+import torchvision.transforms as tvt
+from pytorch_ood.utils import OODMetrics, ToRGB, ToUnknown
+from torchvision.transforms.functional import to_pil_image
+import random
+import matplotlib.pyplot as plt
+from utils import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+mean = [x / 255 for x in [125.3, 123.0, 113.9]]
+std = [x / 255 for x in [63.0, 62.1, 66.7]]
 
 fix_random_seed(123)
 
@@ -74,11 +65,9 @@ for ood_dataset in ood_datasets:
     datasets[ood_dataset.__name__] = test_loader
 
 # **Stage 1**: Create DNN with pre-trained weights from the Hendrycks baseline paper
-print("STAGE 1: Creating a Model")
 model = WideResNet(num_classes=10, pretrained="cifar10-pt").eval().to(device)
 
 # **Stage 2**: Create OOD detector
-print("STAGE 2: Creating OOD Detectors")
 detectors = {}
 # detectors["Entropy"] = Entropy(model)
 # detectors["ViM"] = ViM(model.features, d=64, w=model.fc.weight, b=model.fc.bias)
@@ -98,7 +87,6 @@ detectors["MSP"] = MaxSoftmax(model)
 # detectors["RMD"] = RMD(model.features)
 
 # fit detectors to training data (some require this, some do not)
-print(f"> Fitting {len(detectors)} detectors")
 loader_in_train = DataLoader(
     CIFAR10(root="data", train=True, transform=trans), batch_size=256, num_workers=12
 )
@@ -106,26 +94,178 @@ for name, detector in detectors.items():
     print(f"--> Fitting {name}")
     detector.fit(loader_in_train, device=device)
 
-# **Stage 3**: Evaluate Detectors
-print(f"STAGE 3: Evaluating {len(detectors)} detectors on {len(datasets)} datasets.")
 
-with torch.no_grad():
-    for detector_name, detector in detectors.items():
-        results = []
-        auroc = []
-        aupr = []
-        fpr95 = []
-        print(f"> Evaluating {detector_name}")
-        for dataset_name, loader in datasets.items():
-            print(f"--> {dataset_name}")
-            metrics = OODMetrics()
-            for x, y in loader:
-                metrics.update(detector(x.to(device)), y.to(device))
+def MixUp(inputs, mix_size):
+    batch_size = inputs.size(0)
+    index = [torch.randperm(batch_size) for _ in range(mix_size)]
 
-            r = {"Detector": detector_name, "Dataset": dataset_name}
-            r.update(metrics.compute())
+    mixed_input = torch.zeros_like(inputs)
+    for i in range(batch_size):
+        for j in range(mix_size):
+            mixed_input[i] += inputs[index[j][i], :] / mix_size
 
-            results.append(r)
+    return mixed_input
+
+
+new_trans = tvt.Compose(
+    [
+        tvt.Resize(size=(32, 32)),
+        ToRGB(),
+        tvt.ColorJitter(
+            brightness=0.5, contrast=0.3, saturation=0.3, hue=0.3
+        ),  # Random color jitter
+        tvt.RandomAffine((-90, 90), translate=(0.2, 0.2)),
+        tvt.ToTensor(),
+        tvt.Normalize(std=std, mean=mean),
+    ]
+)
+
+
+def unnormalize(tensor, mean, std):
+    for t, m, s in zip(tensor, mean, std):
+        t.mul_(s).add_(m)
+    return tensor
+
+
+def evaluate():
+    with torch.no_grad():
+        for detector_name, detector in detectors.items():
+            results = []
+            print(f"> Evaluating {detector_name}")
+            for dataset_name, loader in datasets.items():
+                print(f"--> {dataset_name}")
+                metrics = OODMetrics()
+                for x, y in loader:
+                    metrics.update(detector(x.to(device)), y.to(device))
+
+                r = {"Detector": detector_name, "Dataset": dataset_name}
+                r.update(metrics.compute())
+
+                results.append(r)
+    return results
+
+
+def test(model):
+    model.eval()
+    loss = 0
+    correct = 0
+    total = 0
+    criterion = nn.CrossEntropyLoss()
+    with torch.no_grad():
+        for batch_idx, (inputs, targets) in enumerate(test_loader):
+            inputs, targets = inputs.to(device), targets.to(device)
+            total += targets.size(0)
+
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
+            loss += loss.item()
+
+            _, predicted = outputs.max(1)
+            correct += predicted.eq(targets).sum().item()
+
+            test_acc = predicted.eq(targets).sum().item() / targets.size(0)
+            progress_bar(
+                batch_idx,
+                len(test_loader),
+                "Loss: %.3f | Acc: %.3f%% (%d/%d)"
+                % (loss, test_acc * 100, correct, total),
+            )
+
+
+def train():
+    print("\nEpoch: %d" % epoch)
+    train_loss = 0
+    correct = 0
+    total = 0
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(model.parameters(), lr=0.0001, momentum=0.9)
+
+    train_loader_mix = DataLoader(train_data, batch_size=128, num_workers=12)
+
+    original_confidences = []
+    mixed_confidences = []
+
+    log_step = 30
+    for batch_idx, ((inputs, targets), (inputs_mix, targets_mix)) in enumerate(
+        zip(train_loader, train_loader_mix)
+    ):
+        inputs, targets = inputs.to(device), targets.to(device)
+        inputs_mix, targets_mix = inputs_mix.to(device), targets_mix.to(device)
+        optimizer.zero_grad()
+
+        outputs = model(inputs)
+        loss = criterion(outputs, targets)
+
+        train_loss += loss.item()
+        _, predicted = outputs.max(1)
+
+        losses = train_loss / (batch_idx + 1)
+
+        original_prob = torch.softmax(outputs, dim=1).max(1)[0].detach().cpu().numpy()
+        original_confidences.append(original_prob)
+
+        total += targets.size(0)
+        correct += predicted.eq(targets).sum().item()
+
+        mixed_input = MixUp(inputs_mix, mix_size=10)
+        for i in range(inputs.size(0)):
+            x = random.randint(1, 2)
+            if x == 1:
+                mixed_input_pil = to_pil_image(unnormalize(mixed_input[i], mean, std))
+                mixed_input[i] = new_trans(mixed_input_pil)
+
+        mixed_outputs = model(mixed_input)
+        _, mixed_preds = torch.max(mixed_outputs.data, 1)
+
+        mixed_prob = torch.max(torch.softmax(mixed_outputs[0], dim=0)).item()
+        mixed_confidences.append(mixed_prob)
+
+        dir_path = "logs/figures/{}".format(args.exp_name)
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+        if batch_idx % log_step == 0:
+            for i in range(12):
+                img = mixed_input[i].cpu()
+                img = unnormalize(img, mean, std)
+                img = img.numpy().transpose((1, 2, 0))
+                plt.savefig(f"{dir_path}/mim_img_{i}.png")
+
+        batch_size = inputs.size(0)
+        uniform_labels = torch.ones((batch_size, 10), dtype=torch.int64).to(device) / 10
+        uniform_loss = criterion(mixed_outputs, uniform_labels).to(device)
+
+        total_loss = loss + uniform_loss
+        total_loss.backward()
+
+        optimizer.step()
+
+        train_acc = predicted.eq(targets).sum().item() / targets.size(0)
+        train_loss = total_loss.item()
+        progress_bar(
+            batch_idx,
+            len(train_loader),
+            "Loss: %.3f | Acc: %.3f%% (%d/%d)"
+            % (losses, train_acc * 100, correct, total),
+        )
+
+
+train_data = CIFAR10(root="data", train=True, download=True, transform=trans)
+train_loader = DataLoader(train_data, batch_size=128, num_workers=12)
+
+train_data_mix = CIFAR10(root="data", train=True, download=True, transform=new_trans)
+
+test_data = CIFAR10(root="data", train=False, download=True, transform=trans)
+test_loader = DataLoader(test_data, batch_size=128, num_workers=12)
+
+
+epochs = 5
+for epoch in range(epochs):
+    train()
+    test()
+
+    do_eval = epoch == epochs - 1
+    if do_eval:
+        results = evaluate()
 
 # calculate mean scores over all datasets, use percent
 df = pd.DataFrame(results)
