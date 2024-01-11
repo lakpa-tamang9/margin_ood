@@ -19,6 +19,7 @@ import random
 import matplotlib.pyplot as plt
 from utils import *
 from dataset_utils.randimages import RandomImages
+import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mean = [x / 255 for x in [125.3, 123.0, 113.9]]
@@ -34,7 +35,8 @@ parser.add_argument(
     "--exp_name",
     "-en",
     type=str,
-    required=True,
+    default="test",
+    required=False,
 )
 args = parser.parse_args()
 
@@ -75,10 +77,10 @@ detectors = {}
 # detectors["Mahalanobis+ODIN"] = Mahalanobis(
 #     model.features, norm_std=norm_std, eps=0.002
 # )
-# detectors["Mahalanobis"] = Mahalanobis(model.features)
+detectors["Mahalanobis"] = Mahalanobis(model.features)
 # detectors["KLMatching"] = KLMatching(model)
 # detectors["SHE"] = SHE(model.features, model.fc)
-detectors["MSP"] = MaxSoftmax(model)
+# detectors["MSP"] = MaxSoftmax(model)
 # detectors["EnergyBased"] = EnergyBased(model)
 # detectors["MaxLogit"] = MaxLogit(model)
 # detectors["ODIN"] = ODIN(model, norm_std=norm_std, eps=0.002)
@@ -224,7 +226,8 @@ def train():
         inputs = in_set[0].to(device)
         targets = in_set[1].to(device)
         out_set_tensor = out_set[0].to(device)
-        mixed_input = OE_mixup(inputs, out_set_tensor)
+        after_mix = OE_mixup(inputs, out_set_tensor)
+        mixed_input = torch.cat((inputs, after_mix), 0)
 
         # inputs, targets = inputs.to(device), targets.to(device)
         # inputs_mix, targets_mix = inputs_mix.to(device), targets_mix.to(device)
@@ -235,8 +238,6 @@ def train():
 
         train_loss += loss.item()
         _, predicted = outputs.max(1)
-
-        losses = train_loss / (batch_idx + 1)
 
         original_prob = torch.softmax(outputs, dim=1).max(1)[0].detach().cpu().numpy()
         original_confidences.append(original_prob)
@@ -267,14 +268,23 @@ def train():
                 img = img.numpy().transpose((1, 2, 0))
                 plt.savefig(f"{dir_path}/mim_img_{i}.png")
 
-        batch_size = inputs.size(0)
+        normalized_probs = torch.nn.functional.softmax(mixed_outputs, dim=1)
+        max_id, _ = torch.max(normalized_probs[: len(inputs)], dim=1)
+        max_ood, _ = torch.max(normalized_probs[len(inputs) :], dim=1)
+
+        batch_size = mixed_input.size(0)
         uniform_labels = torch.ones((batch_size, 10), dtype=torch.int64).to(device) / 10
         uniform_loss = criterion(mixed_outputs, uniform_labels).to(device)
 
-        total_loss = loss + uniform_loss
+        loss_pre = torch.pow(F.relu(max_id - max_ood), 2).mean()
+        margin_loss = torch.clamp(margin - loss_pre, min=0.0)
+
+        total_loss = loss + uniform_loss + margin_loss
         total_loss.backward()
 
         optimizer.step()
+
+        losses = total_loss / (batch_idx + 1)
 
         train_acc = predicted.eq(targets).sum().item() / targets.size(0)
         train_loss = total_loss.item()
@@ -295,28 +305,33 @@ test_data = CIFAR10(root="data", train=False, download=True, transform=trans)
 test_loader = DataLoader(test_data, batch_size=128, num_workers=12)
 
 
-epochs = 5
-for epoch in range(epochs):
-    train()
-    test()
+epochs = 10
+for margin in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]:
+    for epoch in range(epochs):
+        train()
+        test()
 
-    do_eval = epoch == epochs - 1
-    if do_eval:
-        results = evaluate()
+        do_eval = epoch == epochs - 1
+        if do_eval:
+            results = evaluate()
 
-# calculate mean scores over all datasets, use percent
-df = pd.DataFrame(results)
-mean_auroc = df.groupby("Detector")["AUROC"].mean() * 100
-mean_aupr_in = df.groupby("Detector")["AUPR-IN"].mean() * 100
-mean_aupr_out = df.groupby("Detector")["AUPR-OUT"].mean() * 100
-mean_fpr95 = df.groupby("Detector")["FPR95TPR"].mean() * 100
+    # calculate mean scores over all datasets, use percent
+    df = pd.DataFrame(results)
+    mean_auroc = df.groupby("Detector")["AUROC"].mean() * 100
+    mean_aupr_in = df.groupby("Detector")["AUPR-IN"].mean() * 100
+    mean_aupr_out = df.groupby("Detector")["AUPR-OUT"].mean() * 100
+    mean_fpr95 = df.groupby("Detector")["FPR95TPR"].mean() * 100
 
-df.loc[len(df.index)] = [
-    "MSP",
-    "Mean Values",
-    mean_auroc.values[0],
-    mean_aupr_in.values[0],
-    mean_aupr_out.values[0],
-    mean_fpr95.values[0],
-]
-df.to_csv("logs/pytorch_ood/fine_tuning_results/{}.csv".format(args.exp_name))
+    df.loc[len(df.index)] = [
+        "MSP",
+        "Mean Values",
+        mean_auroc.values[0],
+        mean_aupr_in.values[0],
+        mean_aupr_out.values[0],
+        mean_fpr95.values[0],
+    ]
+    df.to_csv(
+        "logs/pytorch_ood/fine_tuning_results/{}_margin_{}.csv".format(
+            args.exp_name, margin
+        )
+    )
