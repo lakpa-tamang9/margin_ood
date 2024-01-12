@@ -70,21 +70,13 @@ elif args.dataset == "cifar100":
     )
     num_classes = 100
 
-svhn_data = dset.ImageFolder(
-    root="data/svhn",
-    transform=tvt.Compose(
-        [tvt.Resize(32), tvt.CenterCrop(32), tvt.ToTensor(), tvt.Normalize(mean, std)]
-    ),
-)
-isun_data = dset.ImageFolder(
-    root="data/iSUN",
-    transform=tvt.Compose([tvt.ToTensor(), tvt.Normalize(mean, std)]),
-)
+svhn = dset.ImageFolder(root="data/svhn", transform=trans, target_transform=ToUnknown())
+isun = dset.ImageFolder(root="data/iSUN", transform=trans, target_transform=ToUnknown())
 # create all OOD datasets
 ood_datasets = [
     Textures,
-    TinyImageNetCrop,
-    TinyImageNetResize,
+    "svhn",
+    "isun",
     LSUNCrop,
     LSUNResize,
     Places365,
@@ -94,19 +86,28 @@ for ood_dataset in ood_datasets:
     dataset_out_test = ood_dataset(
         root="data", transform=trans, target_transform=ToUnknown(), download=True
     )
+    if ood_dataset == "svhn":
+        dataset_out_test = dset.ImageFolder(
+            root="data/svhn", transform=trans, target_transform=ToUnknown()
+        )
+    elif ood_dataset == "isun":
+        dataset_out_test = dset.ImageFolder(
+            root="data/iSUN", transform=trans, target_transform=ToUnknown()
+        )
+
     test_loader = DataLoader(
         dataset_in_test + dataset_out_test, batch_size=256, num_workers=12
     )
     datasets[ood_dataset.__name__] = test_loader
 
-# **Stage 1**: Create DNN with pre-trained weights from the Hendrycks baseline paper
+# Create DNN with pre-trained weights from the Hendrycks baseline paper
 model = (
     WideResNet(num_classes=num_classes, pretrained="{}-pt".format(args.dataset))
     .eval()
     .to(device)
 )
 
-# **Stage 2**: Create OOD detector
+# Create OOD detector
 detectors = {}
 # detectors["Entropy"] = Entropy(model)
 # detectors["ViM"] = ViM(model.features, d=64, w=model.fc.weight, b=model.fc.bias)
