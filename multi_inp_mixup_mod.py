@@ -70,8 +70,6 @@ elif args.dataset == "cifar100":
     )
     num_classes = 100
 
-svhn = dset.ImageFolder(root="data/svhn", transform=trans, target_transform=ToUnknown())
-isun = dset.ImageFolder(root="data/iSUN", transform=trans, target_transform=ToUnknown())
 # create all OOD datasets
 ood_datasets = [
     Textures,
