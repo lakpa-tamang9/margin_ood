@@ -21,6 +21,8 @@ import matplotlib.pyplot as plt
 from utils import *
 from dataset_utils.randimages import RandomImages
 import torch.nn.functional as F
+from PIL import Image
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mean = [x / 255 for x in [125.3, 123.0, 113.9]]
@@ -41,6 +43,12 @@ parser.add_argument(
 )
 parser.add_argument(
     "--dataset", "-d", type=str, default="cifar10", choices=["cifar10", "cifar100"]
+)
+parser.add_argument(
+    "--num_trials",
+    type=int,
+    default=5,
+    help="Total number of trials to average the result.",
 )
 args = parser.parse_args()
 
@@ -81,9 +89,6 @@ ood_datasets = [
 ]
 datasets = {}
 for ood_dataset in ood_datasets:
-    dataset_out_test = ood_dataset(
-        root="data", transform=trans, target_transform=ToUnknown(), download=True
-    )
     if ood_dataset == "svhn":
         dataset_out_test = dset.ImageFolder(
             root="data/svhn", transform=trans, target_transform=ToUnknown()
@@ -92,11 +97,18 @@ for ood_dataset in ood_datasets:
         dataset_out_test = dset.ImageFolder(
             root="data/iSUN", transform=trans, target_transform=ToUnknown()
         )
+    else:
+        dataset_out_test = ood_dataset(
+            root="data", transform=trans, target_transform=ToUnknown(), download=True
+        )
 
     test_loader = DataLoader(
         dataset_in_test + dataset_out_test, batch_size=256, num_workers=12
     )
-    datasets[ood_dataset.__name__] = test_loader
+    if ood_dataset in ["svhn", "isun"]:
+        datasets[ood_dataset] = test_loader
+    else:
+        datasets[ood_dataset.__name__] = test_loader
 
 # Create DNN with pre-trained weights from the Hendrycks baseline paper
 model = (
@@ -198,17 +210,24 @@ def evaluate():
         for detector_name, detector in detectors.items():
             results = []
             print(f"> Evaluating {detector_name}")
-            for dataset_name, loader in datasets.items():
-                print(f"--> {dataset_name}")
-                metrics = OODMetrics()
-                for x, y in loader:
-                    metrics.update(detector(x.to(device)), y.to(device))
+            trial_results = []
+            for num in range(args.num_trials):
+                for dataset_name, loader in datasets.items():
+                    print(f"--> {dataset_name}")
+                    metrics = OODMetrics()
+                    for x, y in loader:
+                        metrics.update(detector(x.to(device)), y.to(device))
 
-                r = {"Detector": detector_name, "Dataset": dataset_name}
-                r.update(metrics.compute())
+                    r = {
+                        "Detector": detector_name,
+                        "Dataset": dataset_name,
+                        "Trial no.": num,
+                    }
+                    r.update(metrics.compute())
 
-                results.append(r)
-    return results
+                    results.append(r)
+                trial_results.append(results)
+    return trial_results
 
 
 def test():
@@ -236,6 +255,13 @@ def test():
                 "Loss: %.3f | Acc: %.3f%% (%d/%d)"
                 % (loss, test_acc * 100, correct, total),
             )
+
+
+def save_fig(name, img, dir_path, count):
+    img = unnormalize(img, mean, std)
+    img = ((img.numpy().transpose((1, 2, 0))) * 255).astype(np.uint8)
+    img = Image.fromarray(img)
+    img.save("{}/mlm_img_{}_{}_{}.png".format(dir_path, args.dataset, name, count))
 
 
 def train():
@@ -289,12 +315,36 @@ def train():
         dir_path = "logs/figures/{}".format(args.exp_name)
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
-        if batch_idx % log_step == 0:
-            for i in range(12):
-                img = mixed_input[i].cpu()
-                img = unnormalize(img, mean, std)
-                img = img.numpy().transpose((1, 2, 0))
-                plt.savefig(f"{dir_path}/mim_img_{i}.png")
+        if margin == 0.1:  # only save image for one margin, change as necessary
+            if batch_idx % log_step == 0:
+                for i in range(5):
+                    inputs_viz = inputs[i].cpu()
+                    out_set_tensor_viz = out_set_tensor[i].cpu()
+                    after_mix_viz = after_mix[i].cpu()
+                    mixed_input_viz = mixed_input[i].cpu()
+
+                    # Save all id, ood, and mixed figs
+                    save_fig(
+                        name="inputs_viz", img=inputs_viz, dir_path=dir_path, count=i
+                    )
+                    save_fig(
+                        name="out_set_tensor_viz",
+                        img=out_set_tensor_viz,
+                        dir_path=dir_path,
+                        count=i,
+                    )
+                    save_fig(
+                        name="after_mix_viz",
+                        img=after_mix_viz,
+                        dir_path=dir_path,
+                        count=i,
+                    )
+                    save_fig(
+                        name="mixed_input_viz",
+                        img=mixed_input_viz,
+                        dir_path=dir_path,
+                        count=i,
+                    )
 
         normalized_probs = torch.nn.functional.softmax(mixed_outputs, dim=1)
         max_id, _ = torch.max(normalized_probs[: len(inputs)], dim=1)
@@ -343,32 +393,56 @@ elif args.dataset == "cifar100":
 
 
 epochs = 10
-for margin in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]:
+margins = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+for margin in margins:
     for epoch in range(epochs):
         train()
         test()
 
         do_eval = epoch == epochs - 1
         if do_eval:
-            results = evaluate()
+            trial_results = evaluate()
+    all_auroc = []
+    all_aupr_in = []
+    all_aupr_out = []
+    all_fpr95 = []
+    for results in trial_results:
+        # calculate mean scores over all datasets, use percent
+        df = pd.DataFrame(results)
+        auroc = df.groupby("Detector")["AUROC"].mean() * 100
+        aupr_in = df.groupby("Detector")["AUPR-IN"].mean() * 100
+        aupr_out = df.groupby("Detector")["AUPR-OUT"].mean() * 100
+        fpr95 = df.groupby("Detector")["FPR95TPR"].mean() * 100
+        all_auroc.append(auroc.values[0])
+        all_aupr_in.append(aupr_in.values[0])
+        all_aupr_out.append(aupr_out.values[0])
+        all_fpr95.append(fpr95.values[0])
 
-    # calculate mean scores over all datasets, use percent
-    df = pd.DataFrame(results)
-    mean_auroc = df.groupby("Detector")["AUROC"].mean() * 100
-    mean_aupr_in = df.groupby("Detector")["AUPR-IN"].mean() * 100
-    mean_aupr_out = df.groupby("Detector")["AUPR-OUT"].mean() * 100
-    mean_fpr95 = df.groupby("Detector")["FPR95TPR"].mean() * 100
-
-    df.loc[len(df.index)] = [
-        "MSP",
-        "Mean Values",
-        mean_auroc.values[0],
-        mean_aupr_in.values[0],
-        mean_aupr_out.values[0],
-        mean_fpr95.values[0],
-    ]
-    df.to_csv(
-        "logs/pytorch_ood/fine_tuning_results/{}_{}_margin_{}.csv".format(
+    mean_row = pd.DataFrame(
+        [
+            "MSP",
+            "Mean Values",
+            "Mean Val Over OODs",
+            auroc.values[0],
+            aupr_in.values[0],
+            aupr_out.values[0],
+            fpr95.values[0],
+        ]
+    ).T
+    avg_row = pd.DataFrame(
+        [
+            "MSP",
+            "Five Trial Avg.",
+            "Average",
+            np.mean(all_auroc),
+            np.mean(all_aupr_in),
+            np.mean(all_aupr_out),
+            np.mean(all_fpr95),
+        ]
+    ).T
+    final_df = pd.concat([df, mean_row, avg_row], axis=0, ignore_index=True)
+    final_df.to_csv(
+        "logs/pytorch_ood/fine_tuning_results_six_bencmark_test_datasets/{}_{}_margin_{}.csv".format(
             args.exp_name, args.dataset, margin
         )
     )
