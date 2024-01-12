@@ -1,7 +1,7 @@
 import pandas as pd  # additional dependency, used here for convenience
 import torch
 from torch.utils.data import DataLoader
-from torchvision.datasets import CIFAR10
+from torchvision.datasets import CIFAR10, CIFAR100
 import numpy as np
 from pytorch_ood.dataset.img import *
 import torch.nn as nn
@@ -16,6 +16,7 @@ import torchvision.transforms as tvt
 from pytorch_ood.utils import OODMetrics, ToRGB, ToUnknown
 from torchvision.transforms.functional import to_pil_image
 import random
+import torchvision.datasets as dset
 import matplotlib.pyplot as plt
 from utils import *
 from dataset_utils.randimages import RandomImages
@@ -38,16 +39,47 @@ parser.add_argument(
     default="test",
     required=False,
 )
+parser.add_argument(
+    "--dataset", "-d", type=str, default="cifar10", choices=["cifar10", "cifar100"]
+)
 args = parser.parse_args()
 
 # Setup preprocessing
-trans = WideResNet.transform_for("cifar10-pt")
 norm_std = WideResNet.norm_std_for("cifar10-pt")
 
 # Setup datasets
+if args.dataset == "cifar10":
+    trans = WideResNet.transform_for("cifar10-pt")
+    dataset_in_test = CIFAR10(root="data", train=False, transform=trans, download=True)
+    # fit detectors to training data (some require this, some do not)
+    loader_in_train = DataLoader(
+        CIFAR10(root="data", train=True, transform=trans),
+        batch_size=256,
+        num_workers=12,
+    )
+    num_classes = 10
 
-dataset_in_test = CIFAR10(root="data", train=False, transform=trans, download=True)
+elif args.dataset == "cifar100":
+    trans = WideResNet.transform_for("cifar100-pt")
+    dataset_in_test = CIFAR100(root="data", train=False, transform=trans, download=True)
+    # fit detectors to training data (some require this, some do not)
+    loader_in_train = DataLoader(
+        CIFAR100(root="data", train=True, transform=trans),
+        batch_size=256,
+        num_workers=12,
+    )
+    num_classes = 100
 
+svhn_data = dset.ImageFolder(
+    root="data/svhn",
+    transform=tvt.Compose(
+        [tvt.Resize(32), tvt.CenterCrop(32), tvt.ToTensor(), tvt.Normalize(mean, std)]
+    ),
+)
+isun_data = dset.ImageFolder(
+    root="data/iSUN",
+    transform=tvt.Compose([tvt.ToTensor(), tvt.Normalize(mean, std)]),
+)
 # create all OOD datasets
 ood_datasets = [
     Textures,
@@ -68,7 +100,11 @@ for ood_dataset in ood_datasets:
     datasets[ood_dataset.__name__] = test_loader
 
 # **Stage 1**: Create DNN with pre-trained weights from the Hendrycks baseline paper
-model = WideResNet(num_classes=10, pretrained="cifar10-pt").eval().to(device)
+model = (
+    WideResNet(num_classes=num_classes, pretrained="{}-pt".format(args.dataset))
+    .eval()
+    .to(device)
+)
 
 # **Stage 2**: Create OOD detector
 detectors = {}
@@ -88,11 +124,6 @@ detectors["Mahalanobis"] = Mahalanobis(model.features)
 #     model=model.features, w=model.fc.weight, b=model.fc.bias, p=0.65
 # )
 # detectors["RMD"] = RMD(model.features)
-
-# fit detectors to training data (some require this, some do not)
-loader_in_train = DataLoader(
-    CIFAR10(root="data", train=True, transform=trans), batch_size=256, num_workers=12
-)
 
 outlier_data = RandomImages(
     transform=tvt.Compose(
@@ -188,7 +219,7 @@ def test():
     total = 0
     criterion = nn.CrossEntropyLoss()
     with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(test_loader):
+        for batch_idx, (inputs, targets) in enumerate(val_loader):
             inputs, targets = inputs.to(device), targets.to(device)
             total += targets.size(0)
 
@@ -202,7 +233,7 @@ def test():
             test_acc = predicted.eq(targets).sum().item() / targets.size(0)
             progress_bar(
                 batch_idx,
-                len(test_loader),
+                len(val_loader),
                 "Loss: %.3f | Acc: %.3f%% (%d/%d)"
                 % (loss, test_acc * 100, correct, total),
             )
@@ -215,8 +246,6 @@ def train():
     total = 0
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=0.0001, momentum=0.9)
-
-    train_loader_mix = DataLoader(train_data, batch_size=128, num_workers=12)
 
     original_confidences = []
     mixed_confidences = []
@@ -273,7 +302,10 @@ def train():
         max_ood, _ = torch.max(normalized_probs[len(inputs) :], dim=1)
 
         batch_size = mixed_input.size(0)
-        uniform_labels = torch.ones((batch_size, 10), dtype=torch.int64).to(device) / 10
+        uniform_labels = (
+            torch.ones((batch_size, num_classes), dtype=torch.int64).to(device)
+            / num_classes
+        )
         uniform_loss = criterion(mixed_outputs, uniform_labels).to(device)
 
         loss_pre = torch.pow(F.relu(max_id - max_ood), 2).mean()
@@ -296,13 +328,19 @@ def train():
         )
 
 
-train_data = CIFAR10(root="data", train=True, download=True, transform=trans)
-train_loader = DataLoader(train_data, batch_size=128, num_workers=12)
+if args.dataset == "cifar10":
+    train_data = CIFAR10(root="data", train=True, download=True, transform=trans)
+    train_loader = DataLoader(train_data, batch_size=128, num_workers=12)
 
-train_data_mix = CIFAR10(root="data", train=True, download=True, transform=new_trans)
+    val_data = CIFAR10(root="data", train=False, download=True, transform=trans)
+    val_loader = DataLoader(val_data, batch_size=128, num_workers=12)
 
-test_data = CIFAR10(root="data", train=False, download=True, transform=trans)
-test_loader = DataLoader(test_data, batch_size=128, num_workers=12)
+elif args.dataset == "cifar100":
+    train_data = CIFAR100(root="data", train=True, download=True, transform=trans)
+    train_loader = DataLoader(train_data, batch_size=128, num_workers=12)
+
+    val_data = CIFAR100(root="data", train=False, download=True, transform=trans)
+    val_loader = DataLoader(val_data, batch_size=128, num_workers=12)
 
 
 epochs = 10
@@ -331,7 +369,7 @@ for margin in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]:
         mean_fpr95.values[0],
     ]
     df.to_csv(
-        "logs/pytorch_ood/fine_tuning_results/{}_margin_{}.csv".format(
-            args.exp_name, margin
+        "logs/pytorch_ood/fine_tuning_results/{}_{}_margin_{}.csv".format(
+            args.exp_name, args.dataset, margin
         )
     )
