@@ -50,6 +50,18 @@ parser.add_argument(
     default=5,
     help="Total number of trials to average the result.",
 )
+parser.add_argument(
+    "--save_img",
+    type=bool,
+    default=False,
+    help="Save the input and outlier images.",
+)
+parser.add_argument(
+    "--save_array",
+    type=bool,
+    default=False,
+    help="Save the input and outlier npy arry for plots",
+)
 args = parser.parse_args()
 
 # Setup preprocessing
@@ -276,13 +288,20 @@ def train():
     mixed_confidences = []
 
     log_step = 30
+    inputs_list = []
+    out_set_tensor_list = []
+    after_mix_list = []
     for batch_idx, (in_set, out_set) in enumerate(zip(train_loader, train_loader_out)):
         inputs = in_set[0].to(device)
+        inputs_list.append(inputs.detach().cpu().numpy())
         targets = in_set[1].to(device)
         out_set_tensor = out_set[0].to(device)
+        out_set_tensor_list.append(out_set_tensor.detach().cpu().numpy())
         after_mix = OE_mixup(inputs, out_set_tensor)
+        after_mix_list.append(after_mix.detach().cpu().numpy())
         mixed_input = torch.cat((inputs, after_mix), 0)
-
+        # todo: save after_mix tensor, inputs tensor, and out_set tensor and plot them distributionally
+        # todo: use np.save("name.npy", data)
         # inputs, targets = inputs.to(device), targets.to(device)
         # inputs_mix, targets_mix = inputs_mix.to(device), targets_mix.to(device)
         optimizer.zero_grad()
@@ -315,36 +334,40 @@ def train():
         dir_path = "logs/figures/{}".format(args.exp_name)
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
-        if margin == 0.1:  # only save image for one margin, change as necessary
-            if batch_idx % log_step == 0:
-                for i in range(5):
-                    inputs_viz = inputs[i].cpu()
-                    out_set_tensor_viz = out_set_tensor[i].cpu()
-                    after_mix_viz = after_mix[i].cpu()
-                    mixed_input_viz = mixed_input[i].cpu()
+        if args.save_img:
+            if margin == 0.1:  # only save image for one margin, change as necessary
+                if batch_idx % log_step == 0:
+                    for i in range(5):
+                        inputs_viz = inputs[i].cpu()
+                        out_set_tensor_viz = out_set_tensor[i].cpu()
+                        after_mix_viz = after_mix[i].cpu()
+                        mixed_input_viz = mixed_input[i].cpu()
 
-                    # Save all id, ood, and mixed figs
-                    save_fig(
-                        name="inputs_viz", img=inputs_viz, dir_path=dir_path, count=i
-                    )
-                    save_fig(
-                        name="out_set_tensor_viz",
-                        img=out_set_tensor_viz,
-                        dir_path=dir_path,
-                        count=i,
-                    )
-                    save_fig(
-                        name="after_mix_viz",
-                        img=after_mix_viz,
-                        dir_path=dir_path,
-                        count=i,
-                    )
-                    save_fig(
-                        name="mixed_input_viz",
-                        img=mixed_input_viz,
-                        dir_path=dir_path,
-                        count=i,
-                    )
+                        # Save all id, ood, and mixed figs
+                        save_fig(
+                            name="inputs_viz",
+                            img=inputs_viz,
+                            dir_path=dir_path,
+                            count=i,
+                        )
+                        save_fig(
+                            name="out_set_tensor_viz",
+                            img=out_set_tensor_viz,
+                            dir_path=dir_path,
+                            count=i,
+                        )
+                        save_fig(
+                            name="after_mix_viz",
+                            img=after_mix_viz,
+                            dir_path=dir_path,
+                            count=i,
+                        )
+                        save_fig(
+                            name="mixed_input_viz",
+                            img=mixed_input_viz,
+                            dir_path=dir_path,
+                            count=i,
+                        )
 
         normalized_probs = torch.nn.functional.softmax(mixed_outputs, dim=1)
         max_id, _ = torch.max(normalized_probs[: len(inputs)], dim=1)
@@ -375,6 +398,22 @@ def train():
             "Loss: %.3f | Acc: %.3f%% (%d/%d)"
             % (losses, train_acc * 100, correct, total),
         )
+    if args.save_array:
+        np.save(
+            "logs/numpy_data/{}_input_tensor.npy".format(args.dataset),
+            np.array(inputs_list, dtype=object),
+            allow_pickle=True,
+        )
+        np.save(
+            "logs/numpy_data/{}_out_set_tensor.npy".format(args.dataset),
+            np.array(out_set_tensor_list, dtype=object),
+            allow_pickle=True,
+        )
+        np.save(
+            "logs/numpy_data/{}_after_mix_tensor.npy".format(args.dataset),
+            np.array(after_mix_list, dtype=object),
+            allow_pickle=True,
+        )
 
 
 if args.dataset == "cifar10":
@@ -392,7 +431,7 @@ elif args.dataset == "cifar100":
     val_loader = DataLoader(val_data, batch_size=128, num_workers=12)
 
 
-epochs = 10
+epochs = 1
 margins = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
 for margin in margins:
     for epoch in range(epochs):
