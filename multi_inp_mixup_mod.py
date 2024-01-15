@@ -63,6 +63,14 @@ parser.add_argument(
     help="Plot the feature representation of the penultimate layer.",
 )
 parser.add_argument(
+    "--num_plot_samples",
+    "-nps",
+    type=int,
+    default=1000,
+    help="Total number of samples for T-SNE plot",
+)
+
+parser.add_argument(
     "--save_array",
     type=bool,
     default=False,
@@ -458,7 +466,7 @@ elif args.dataset == "cifar100":
 
 
 perm_train = torch.randperm(train_loader.__len__() + train_loader_out.__len__())
-select_train = perm_train[:100]
+select_train = perm_train[: args.num_plot_samples]
 
 epochs = 10
 margins = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
@@ -483,54 +491,60 @@ for margin in margins:
             total_labels = (label_id, label_ood)
 
             plot_features(
-                "logs/tsne_plot", total_features, total_labels, 10, epoch, "train/"
+                "logs/tsne_plot",
+                total_features,
+                total_labels,
+                10,
+                epoch,
+                "train_{}_samples/".format(args.num_plot_samples),
             )
         test()
 
-        do_eval = epoch == epochs + 1
-        if do_eval:
+        do_eval = epoch == epochs - 1
+        if do_eval and not args.plot_tsne:
             trial_results = evaluate()
-    all_auroc = []
-    all_aupr_in = []
-    all_aupr_out = []
-    all_fpr95 = []
-    for results in trial_results:
-        # calculate mean scores over all datasets, use percent
-        df = pd.DataFrame(results)
-        auroc = df.groupby("Detector")["AUROC"].mean() * 100
-        aupr_in = df.groupby("Detector")["AUPR-IN"].mean() * 100
-        aupr_out = df.groupby("Detector")["AUPR-OUT"].mean() * 100
-        fpr95 = df.groupby("Detector")["FPR95TPR"].mean() * 100
-        all_auroc.append(auroc.values[0])
-        all_aupr_in.append(aupr_in.values[0])
-        all_aupr_out.append(aupr_out.values[0])
-        all_fpr95.append(fpr95.values[0])
+    if not args.plot_tsne:
+        all_auroc = []
+        all_aupr_in = []
+        all_aupr_out = []
+        all_fpr95 = []
+        for results in trial_results:
+            # calculate mean scores over all datasets, use percent
+            df = pd.DataFrame(results)
+            auroc = df.groupby("Detector")["AUROC"].mean() * 100
+            aupr_in = df.groupby("Detector")["AUPR-IN"].mean() * 100
+            aupr_out = df.groupby("Detector")["AUPR-OUT"].mean() * 100
+            fpr95 = df.groupby("Detector")["FPR95TPR"].mean() * 100
+            all_auroc.append(auroc.values[0])
+            all_aupr_in.append(aupr_in.values[0])
+            all_aupr_out.append(aupr_out.values[0])
+            all_fpr95.append(fpr95.values[0])
 
-    mean_row = pd.DataFrame(
-        [
-            "MSP",
-            "Mean Values",
-            "Mean Val Over OODs",
-            auroc.values[0],
-            aupr_in.values[0],
-            aupr_out.values[0],
-            fpr95.values[0],
-        ]
-    ).T
-    avg_row = pd.DataFrame(
-        [
-            "MSP",
-            "Five Trial Avg.",
-            "Average",
-            np.mean(all_auroc),
-            np.mean(all_aupr_in),
-            np.mean(all_aupr_out),
-            np.mean(all_fpr95),
-        ]
-    ).T
-    final_df = pd.concat([df, mean_row, avg_row], axis=0, ignore_index=True)
-    final_df.to_csv(
-        "logs/pytorch_ood/fine_tuning_results_six_bencmark_test_datasets/{}_{}_margin_{}.csv".format(
-            args.exp_name, args.dataset, margin
+        mean_row = pd.DataFrame(
+            [
+                "MSP",
+                "Mean Values",
+                "Mean Val Over OODs",
+                auroc.values[0],
+                aupr_in.values[0],
+                aupr_out.values[0],
+                fpr95.values[0],
+            ]
+        ).T
+        avg_row = pd.DataFrame(
+            [
+                "MSP",
+                "Five Trial Avg.",
+                "Average",
+                np.mean(all_auroc),
+                np.mean(all_aupr_in),
+                np.mean(all_aupr_out),
+                np.mean(all_fpr95),
+            ]
+        ).T
+        final_df = pd.concat([df, mean_row, avg_row], axis=0, ignore_index=True)
+        final_df.to_csv(
+            "logs/pytorch_ood/fine_tuning_results_six_bencmark_test_datasets/{}_{}_margin_{}.csv".format(
+                args.exp_name, args.dataset, margin
+            )
         )
-    )
