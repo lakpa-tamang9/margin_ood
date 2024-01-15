@@ -57,6 +57,12 @@ parser.add_argument(
     help="Save the input and outlier images.",
 )
 parser.add_argument(
+    "--plot_tsne",
+    type=bool,
+    default=False,
+    help="Plot the feature representation of the penultimate layer.",
+)
+parser.add_argument(
     "--save_array",
     type=bool,
     default=False,
@@ -136,10 +142,10 @@ detectors = {}
 # detectors["Mahalanobis+ODIN"] = Mahalanobis(
 #     model.features, norm_std=norm_std, eps=0.002
 # )
-detectors["Mahalanobis"] = Mahalanobis(model.features)
+# detectors["Mahalanobis"] = Mahalanobis(model.features)
 # detectors["KLMatching"] = KLMatching(model)
 # detectors["SHE"] = SHE(model.features, model.fc)
-# detectors["MSP"] = MaxSoftmax(model)
+detectors["MSP"] = MaxSoftmax(model)
 # detectors["EnergyBased"] = EnergyBased(model)
 # detectors["MaxLogit"] = MaxLogit(model)
 # detectors["ODIN"] = ODIN(model, norm_std=norm_std, eps=0.002)
@@ -253,7 +259,7 @@ def test():
             inputs, targets = inputs.to(device), targets.to(device)
             total += targets.size(0)
 
-            outputs = model(inputs)
+            _, outputs = model(inputs)
             loss = criterion(outputs, targets)
             loss += loss.item()
 
@@ -291,12 +297,19 @@ def train():
     inputs_list = []
     out_set_tensor_list = []
     after_mix_list = []
+    train_id_features = []
+    train_ood_features = []
+    train_id_labels = []
+    train_ood_labels = []
+
     for batch_idx, (in_set, out_set) in enumerate(zip(train_loader, train_loader_out)):
         inputs = in_set[0].to(device)
         inputs_list.append(inputs.detach().cpu().numpy())
         targets = in_set[1].to(device)
         out_set_tensor = out_set[0].to(device)
         out_set_tensor_list.append(out_set_tensor.detach().cpu().numpy())
+        ood_targets = torch.tensor([10] * len(out_set_tensor)).to(device)
+
         after_mix = OE_mixup(inputs, out_set_tensor)
         after_mix_list.append(after_mix.detach().cpu().numpy())
         mixed_input = torch.cat((inputs, after_mix), 0)
@@ -306,7 +319,15 @@ def train():
         # inputs_mix, targets_mix = inputs_mix.to(device), targets_mix.to(device)
         optimizer.zero_grad()
 
-        outputs = model(inputs)
+        features, outputs = model(inputs)
+
+        if args.plot_tsne:
+            train_id_features.append(features[: len(inputs)])
+            train_ood_features.append(features[len(inputs) :])
+
+            train_id_labels.append(targets)
+            train_ood_labels.append(ood_targets)
+
         loss = criterion(outputs, targets)
 
         train_loss += loss.item()
@@ -325,7 +346,7 @@ def train():
                 mixed_input_pil = to_pil_image(unnormalize(mixed_input[i], mean, std))
                 mixed_input[i] = new_trans(mixed_input_pil)
 
-        mixed_outputs = model(mixed_input)
+        _, mixed_outputs = model(mixed_input)
         _, mixed_preds = torch.max(mixed_outputs.data, 1)
 
         mixed_prob = torch.max(torch.softmax(mixed_outputs[0], dim=0)).item()
@@ -415,6 +436,11 @@ def train():
             allow_pickle=True,
         )
 
+    if args.plot_tsne:
+        return train_id_features, train_ood_features, train_id_labels, train_ood_labels
+    else:
+        return None
+
 
 if args.dataset == "cifar10":
     train_data = CIFAR10(root="data", train=True, download=True, transform=trans)
@@ -431,14 +457,37 @@ elif args.dataset == "cifar100":
     val_loader = DataLoader(val_data, batch_size=128, num_workers=12)
 
 
-epochs = 1
+perm_train = torch.randperm(train_loader.__len__() + train_loader_out.__len__())
+select_train = perm_train[:100]
+
+epochs = 10
 margins = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
 for margin in margins:
     for epoch in range(epochs):
-        train()
+        (
+            train_id_features,
+            train_ood_features,
+            train_id_labels,
+            train_ood_labels,
+        ) = train()
+
+        if args.plot_tsne:
+            fea_id, label_id = embedding(
+                train_id_features, train_id_labels, select_train
+            )
+            fea_ood, label_ood = embedding(
+                train_id_features, train_id_labels, select_train
+            )
+
+            total_features = (fea_id, fea_ood)
+            total_labels = (label_id, label_ood)
+
+            plot_features(
+                "logs/tsne_plot", total_features, total_labels, 10, epoch, "train/"
+            )
         test()
 
-        do_eval = epoch == epochs - 1
+        do_eval = epoch == epochs + 1
         if do_eval:
             trial_results = evaluate()
     all_auroc = []
