@@ -12,7 +12,7 @@ import torchvision.datasets as dset
 import torch.nn.functional as F
 from tqdm import tqdm
 from models.resnet import ResNet18
-from models.wrn import WideResNet
+from models.wideresnet import WideResNet
 from datasets.aggressive_aug import DoTransform
 from torchvision import transforms
 from dataset_utils.resized_imagenet_loader import ImageNetDownSample
@@ -40,6 +40,19 @@ parser.add_argument(
     type=str,
     default=None,
     help="Folder to save checkpoints.",
+)
+parser.add_argument(
+    "--plot_tsne",
+    type=bool,
+    default=False,
+    help="Plot the feature representation of the penultimate layer.",
+)
+parser.add_argument(
+    "--num_plot_samples",
+    "-nps",
+    type=int,
+    default=500,
+    help="Total number of samples for T-SNE plot",
 )
 
 args = parser.parse_args()
@@ -113,7 +126,7 @@ if use_class_weighting:
 else:
     class_weights = None
 
-# criterion = MarginLoss(class_weights, margin)
+criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.SGD(
     net.parameters(),
     0.001,
@@ -250,9 +263,16 @@ def train(epoch):
             % (losses, train_acc * 100, correct, total),
         )
     if args.plot_tsne:
-        return train_id_features, train_ood_features, train_id_labels, train_ood_labels
+        return (
+            train_id_features,
+            train_ood_features,
+            train_id_labels,
+            train_ood_labels,
+            train_acc,
+            train_loss,
+        )
     else:
-        return None
+        return train_acc, train_loss
 
 
 def test(epoch):
@@ -306,14 +326,45 @@ def test(epoch):
 
 
 # Main loop
+perm_train = torch.randperm(train_loader_in.__len__() + train_loader_out.__len__())
+select_train = perm_train[: args.num_plot_samples]
 # for margin in [0.1, 0.2, 0.3, 0.4, 0.5]:
 for margin in [0.3]:
     metrics = []
     for epoch in range(start_epoch, epochs):
         begin_epoch = time.time()
-        criterion = MarginLoss(weights=class_weights, margin=margin)
         print(f"Training with margin {margin}")
-        train_loss, train_acc = train(epoch=epoch)
+        if epoch % 10 == 0:
+            if args.plot_tsne:
+                (
+                    train_id_features,
+                    train_ood_features,
+                    train_id_labels,
+                    train_ood_labels,
+                    train_acc,
+                    train_loss,
+                ) = train(epoch=epoch)
+
+                fea_id, label_id = embedding(
+                    train_id_features, train_id_labels, select_train
+                )
+                fea_ood, label_ood = embedding(
+                    train_id_features, train_id_labels, select_train
+                )
+
+                total_features = (fea_id, fea_ood)
+                total_labels = (label_id, label_ood)
+
+                plot_features(
+                    "logs/tsne_plot",
+                    total_features,
+                    total_labels,
+                    10,
+                    epoch,
+                    "train_scratch_{}_samples/".format(args.num_plot_samples),
+                )
+        else:
+            train_acc, train_loss = train(epoch=epoch)
         test_loss, test_acc = test(epoch=epoch)
         metrics.append([train_loss, test_loss, train_acc, test_acc])
 

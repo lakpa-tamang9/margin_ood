@@ -496,7 +496,7 @@ for margin in margins:
                 total_labels,
                 10,
                 epoch,
-                "train_{}_samples/".format(args.num_plot_samples),
+                "train_oe_finetune_{}_samples/".format(args.num_plot_samples),
             )
         test()
 
