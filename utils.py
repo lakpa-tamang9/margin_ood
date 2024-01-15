@@ -353,20 +353,20 @@ def plot_features(save_dir, features, labels, num_classes, epoch, prefix):
             features_id[labels_id == label_idx, 0],
             features_id[labels_id == label_idx, 1],
             c=colors[label_idx],
-            linewidths=2,
-            s=10,
+            linewidths=1,
+            s=5,
         )
     plt.scatter(
         features_ood[labels_ood == label_idx, 0],
         features_ood[labels_ood == label_idx, 1],
         c="yellow",
-        linewidths=2,
+        linewidths=1,
         marker="^",
         edgecolor="red",
-        s=10,
+        s=5,
     )
     plt.legend(
-        ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"], loc="upper right"
+        ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "outlier"], loc="upper right"
     )
     dirname = osp.join(save_dir, prefix)
     if not osp.exists(dirname):

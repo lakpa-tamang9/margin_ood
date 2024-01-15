@@ -16,6 +16,7 @@ from models.wrn import WideResNet
 from datasets.aggressive_aug import DoTransform
 from torchvision import transforms
 from dataset_utils.resized_imagenet_loader import ImageNetDownSample
+from dataset_utils.randimages import RandomImages
 
 # from datasets.cifar10 import CIFAR10Extended
 from torchvision.datasets import *
@@ -64,8 +65,7 @@ train_data_in = dset.CIFAR10(root="./data", train=True, transform=train_transfor
 test_data = dset.CIFAR10(root="./data", train=False, transform=val_transform)
 
 # Use DataLoader to iterate over the dataset
-ood_data = ImageNetDownSample(
-    root="./data/ImageNet32",
+outlier_data = RandomImages(
     transform=trn.Compose(
         [
             trn.ToTensor(),
@@ -86,7 +86,7 @@ train_loader_in = torch.utils.data.DataLoader(
 )
 
 train_loader_out = torch.utils.data.DataLoader(
-    ood_data,
+    outlier_data,
     batch_size=oe_batch_size,
     shuffle=False,
     pin_memory=True,
@@ -100,8 +100,8 @@ test_loader = torch.utils.data.DataLoader(
 )
 
 # Load model
-net = ResNet18()
-# net = WideResNet(depth=40, num_classes=10, widen_factor=2)
+# net = ResNet18()
+net = WideResNet(depth=40, num_classes=10, widen_factor=2)
 net = nn.DataParallel(net)
 net.to(device)
 
@@ -149,8 +149,22 @@ def OE_mixup(x_in, x_out, alpha=10.0):
         x_in = x_in[:length]
         x_out = x_out[:length]
     lam = np.random.beta(alpha, alpha)
-    x_oe = lam * x_in + (1 - lam) * x_out
+    x_in_m = MixUp(x_in, mix_size=10)
+    x_out_m = MixUp(x_out, mix_size=10)
+    x_oe = lam * x_in_m + (1 - lam) * x_out_m
     return x_oe
+
+
+def MixUp(inputs, mix_size):
+    batch_size = inputs.size(0)
+    index = [torch.randperm(batch_size) for _ in range(mix_size)]
+
+    mixed_input = torch.zeros_like(inputs)
+    for i in range(batch_size):
+        for j in range(mix_size):
+            mixed_input[i] += inputs[index[j][i], :] / mix_size
+
+    return mixed_input
 
 
 num_classes = 10
@@ -164,58 +178,81 @@ def train(epoch):
     print("\nEpoch: %d" % epoch)
     net.train()
     train_loss = 0
-    loss_avg = 0
     correct = 0
     total = 0
-
+    train_id_features = []
+    train_ood_features = []
+    train_id_labels = []
+    train_ood_labels = []
     train_loader_out.dataset.offset = np.random.randint(len(train_loader_out.dataset))
 
     for batch_idx, (in_set, out_set) in enumerate(
         zip(train_loader_in, train_loader_out)
     ):
-        in_oe = OE_mixup(in_set[0], out_set[0])
-        data = torch.cat((in_set[0], in_oe), 0)
-        targets = in_set[1]
-        target_oe = torch.LongTensor(in_oe.shape[0]).random_(
-            num_classes, num_classes + 1
-        )
-        # print(target_oe.shape)
+        inputs = in_set[0].to(device)
+        targets = in_set[1].to(device)
+        out_set_tensor = out_set[0].to(device)
+        ood_targets = torch.tensor([10] * len(out_set_tensor)).to(device)
 
-        inputs, targets, target_oe = (
-            data.to(device),
-            targets.to(device),
-            target_oe.to(device),
-        )
+        after_mix = OE_mixup(inputs, out_set_tensor)
+        mixed_input = torch.cat((inputs, after_mix), 0)
+
+        optimizer.zero_grad()
+        features, outputs = net(inputs)
+
+        if args.plot_tsne:
+            train_id_features.append(features[: len(inputs)])
+            train_ood_features.append(features[len(inputs) :])
+
+            train_id_labels.append(targets)
+            train_ood_labels.append(ood_targets)
+
+        loss = criterion(outputs, targets)
+
+        train_loss += loss.item()
+        _, predicted = outputs.max(1)
+
+        total += targets.size(0)
+        correct += predicted.eq(targets).sum().item()
+
+        _, mixed_outputs = net(mixed_input)
 
         optimizer.zero_grad()
         outputs = net(inputs)
 
-        # backprop
-        optimizer.zero_grad()
+        normalized_probs = torch.nn.functional.softmax(mixed_outputs, dim=1)
+        max_id, _ = torch.max(normalized_probs[: len(inputs)], dim=1)
+        max_ood, _ = torch.max(normalized_probs[len(inputs) :], dim=1)
 
-        # loss
-        loss = criterion(outputs, targets, target_oe)
+        batch_size = mixed_input.size(0)
+        uniform_labels = (
+            torch.ones((batch_size, num_classes), dtype=torch.int64).to(device)
+            / num_classes
+        )
+        uniform_loss = criterion(mixed_outputs, uniform_labels).to(device)
 
-        loss.backward()
+        loss_pre = torch.pow(F.relu(max_id - max_ood), 2).mean()
+        margin_loss = torch.clamp(margin - loss_pre, min=0.0)
+
+        total_loss = loss + uniform_loss + margin_loss
+        total_loss.backward()
+
         optimizer.step()
 
-        scheduler.step()
+        losses = total_loss / (batch_idx + 1)
 
-        train_loss += loss.item()
-        # loss_avg = loss_avg * 0.8 + float(train_loss) * 0.2
-        # print(train_loss)
-        _, predicted = outputs.max(1)
-        total += targets.size(0)
-        correct += predicted[: len(in_set[0])].eq(targets).sum().item()
-
-        train_acc = 100.0 * correct / total
-        losses = train_loss / (batch_idx + 1)
+        train_acc = predicted.eq(targets).sum().item() / targets.size(0)
+        train_loss = total_loss.item()
         progress_bar(
             batch_idx,
             len(train_loader_in),
-            "Loss: %.3f | Acc: %.3f%% (%d/%d)" % (losses, train_acc, correct, total),
+            "Loss: %.3f | Acc: %.3f%% (%d/%d)"
+            % (losses, train_acc * 100, correct, total),
         )
-    return losses, train_acc
+    if args.plot_tsne:
+        return train_id_features, train_ood_features, train_id_labels, train_ood_labels
+    else:
+        return None
 
 
 def test(epoch):
