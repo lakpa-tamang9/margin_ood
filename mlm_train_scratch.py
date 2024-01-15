@@ -231,7 +231,7 @@ def train(epoch):
         _, mixed_outputs = net(mixed_input)
 
         optimizer.zero_grad()
-        outputs = net(inputs)
+        _, outputs = net(inputs)
 
         normalized_probs = torch.nn.functional.softmax(mixed_outputs, dim=1)
         max_id, _ = torch.max(normalized_probs[: len(inputs)], dim=1)
@@ -286,7 +286,7 @@ def test(epoch):
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(test_loader):
             inputs, targets = inputs.to(device), targets.to(device)
-            outputs = net(inputs)
+            _, outputs = net(inputs)
             # loss = criterion(outputs, targets, ood_class_idx, test=True)
             loss = F.cross_entropy(outputs, targets)
 
