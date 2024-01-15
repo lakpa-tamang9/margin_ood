@@ -12,6 +12,10 @@ import torch.nn as nn
 import torch.nn.init as init
 import numpy as np
 import sklearn.metrics as sk
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+import os.path as osp
 
 
 def get_mean_and_std(dataset):
@@ -301,3 +305,72 @@ def show_performance_comparison(
     print("AUPR:\t\t\t{:.2f}\t\t{:.2f}".format(100 * aupr_base, 100 * aupr_ours))
     # print('FDR{:d}:\t\t\t{:.2f}\t\t{:.2f}'.format(
     #     int(100 * recall_level), 100 * fdr_base, 100 * fdr_ours))
+
+
+def embedding(featureList, labelList, select_indx):
+    assert len(featureList) == len(labelList)
+    assert len(featureList) > 0
+    feature = featureList[0]
+    label = labelList[0]
+    for i in range(1, len(labelList)):
+        feature = torch.cat([feature, featureList[i]], dim=0)
+        label = torch.cat([label, labelList[i]], dim=0)
+
+    feature = feature[select_indx, :]
+    label = label[select_indx]
+
+    feature = feature.cpu().detach().numpy()
+    label = label.cpu().detach().numpy()
+    # Using PCA to reduce dimension to a reasonable dimension as recommended in
+    # https://scikit-learn.org/stable/modules/generated/sklearn.manifold.TSNE.html
+    feature = PCA(n_components=50).fit_transform(feature)
+    feature_embedded = TSNE(n_components=2).fit_transform(feature)
+    return feature_embedded, label
+    # print(f"feature shape: {feature.shape}")
+    # print(f"feature_embedded shape: {feature_embedded.shape}")
+    # print(f"label shape: {label.shape}")
+
+    # uni_label = np.unique(label)
+    # dict={}
+    # for temp in uni_label:
+    #     idx = (label == temp).nonzero()
+    #     fea = feature_embedded[idx,:]
+    #     dict[temp] = fea
+
+
+def plot_features(save_dir, features, labels, num_classes, epoch, prefix):
+    """Plot features on 2D plane.
+
+    Args:
+        features: (num_instances, num_features).
+        labels: (num_instances).
+    """
+    features_id, features_ood = features
+    labels_id, labels_ood = labels
+    colors = ["C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9"]
+    for label_idx in range(num_classes):
+        plt.scatter(
+            features_id[labels_id == label_idx, 0],
+            features_id[labels_id == label_idx, 1],
+            c=colors[label_idx],
+            linewidths=2,
+            s=10,
+        )
+    plt.scatter(
+        features_ood[labels_ood == label_idx, 0],
+        features_ood[labels_ood == label_idx, 1],
+        c="yellow",
+        linewidths=2,
+        marker="^",
+        edgecolor="red",
+        s=10,
+    )
+    plt.legend(
+        ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"], loc="upper right"
+    )
+    dirname = osp.join(save_dir, prefix)
+    if not osp.exists(dirname):
+        os.mkdir(dirname)
+    save_name = osp.join(dirname, "epoch_" + str(epoch + 1) + ".png")
+    plt.savefig(save_name, bbox_inches="tight")
+    plt.close()
