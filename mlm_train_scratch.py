@@ -42,6 +42,13 @@ parser.add_argument(
     help="Folder to save checkpoints.",
 )
 parser.add_argument(
+    "--model",
+    "-m",
+    type=str,
+    default="resnet",
+    help="Name of the model to train",
+)
+parser.add_argument(
     "--plot_tsne",
     type=bool,
     default=False,
@@ -51,7 +58,7 @@ parser.add_argument(
     "--num_plot_samples",
     "-nps",
     type=int,
-    default=500,
+    default=1000,
     help="Total number of samples for T-SNE plot",
 )
 
@@ -111,10 +118,13 @@ test_loader = torch.utils.data.DataLoader(
     shuffle=False,
     pin_memory=True,
 )
+num_classes = 10
 
 # Load model
-# net = ResNet18()
-net = WideResNet(depth=40, num_classes=10, widen_factor=2)
+if args.model == "resnet":
+    net = ResNet18(num_classes=num_classes)
+elif args.model == "wrn":
+    net = WideResNet(depth=40, num_classes=10, widen_factor=2)
 net = nn.DataParallel(net)
 net.to(device)
 
@@ -179,8 +189,6 @@ def MixUp(inputs, mix_size):
 
     return mixed_input
 
-
-num_classes = 10
 
 state = {}
 
@@ -361,10 +369,12 @@ for margin in [0.3]:
                     total_labels,
                     10,
                     epoch,
-                    "train_scratch_{}_samples/".format(args.num_plot_samples),
+                    "train_scratch_{}_{}_samples/".format(
+                        args.model, args.num_plot_samples
+                    ),
                 )
-        else:
-            train_acc, train_loss = train(epoch=epoch)
+            else:
+                train_acc, train_loss = train(epoch=epoch)
         test_loss, test_acc = test(epoch=epoch)
         metrics.append([train_loss, test_loss, train_acc, test_acc])
 
