@@ -13,6 +13,7 @@ develop-eggs/
 checkpoint/
 old_checkpoint/
 logs/
+snapshots/
 old_logs/
 dist/
 data/

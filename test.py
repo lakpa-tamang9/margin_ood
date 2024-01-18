@@ -29,7 +29,7 @@ test_bs = 200
 num_to_avg = 1
 out_as_pos = True
 dataset = "cifar10"
-model = "resnet"
+model = "wrn"
 
 std = [x / 255 for x in [63.0, 62.1, 66.7]]
 mean = [x / 255 for x in [125.3, 123.0, 113.9]]
@@ -124,7 +124,7 @@ def get_scores(loader, calc_id_acc=False, in_dist=False):
             if batch_idx >= ood_num_examples // test_bs and in_dist is False:
                 break
             data, targets = data.to(device), targets.to(device)
-            output = net(data)
+            _, output = net(data)
 
             if calc_id_acc:
                 # Calculate accuracy
@@ -174,7 +174,7 @@ def get_results(ood_loader, in_score, num_to_avg=num_to_avg):
 
 # Restore model
 if model == "resnet":
-    net = ResNet18()
+    net = ResNet18(num_classes=num_classes)
 else:
     net = WideResNet(depth=40, num_classes=10, widen_factor=2, dropRate=0.3)
 
@@ -190,9 +190,9 @@ ood_loaders = {
     "places_365": places365_loader,
 }
 metrics = []
-for i in range(1, 6):
+for i in range(5, 6):
     margin = i / 10
-    model_path = "checkpoint/{}/{}_{}_{}_ckpt99.pt".format(
+    model_path = "checkpoint/{}/{}_{}_{}_ckpt9.pt".format(
         model, dataset, args.exp_name, margin
     )
     net.load_state_dict(torch.load(model_path))
