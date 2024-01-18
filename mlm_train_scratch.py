@@ -136,7 +136,7 @@ if use_class_weighting:
 else:
     class_weights = None
 
-criterion = nn.CrossEntropyLoss()
+# criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.SGD(
     net.parameters(),
     0.001,
@@ -217,8 +217,8 @@ def train(epoch):
 
         after_mix = OE_mixup(inputs, out_set_tensor)
         mixed_input = torch.cat((inputs, after_mix), 0)
-
         optimizer.zero_grad()
+
         features, outputs = net(inputs)
 
         if args.plot_tsne:
@@ -228,39 +228,47 @@ def train(epoch):
             train_id_labels.append(targets)
             train_ood_labels.append(ood_targets)
 
-        loss = criterion(outputs, targets)
+        loss = F.cross_entropy(outputs, targets)
 
-        train_loss += loss.item()
+        # train_loss += loss.item()
         _, predicted = outputs.max(1)
 
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
 
         _, mixed_outputs = net(mixed_input)
-
-        optimizer.zero_grad()
         _, outputs = net(inputs)
 
         normalized_probs = torch.nn.functional.softmax(mixed_outputs, dim=1)
         max_id, _ = torch.max(normalized_probs[: len(inputs)], dim=1)
         max_ood, _ = torch.max(normalized_probs[len(inputs) :], dim=1)
 
-        batch_size = mixed_input.size(0)
-        uniform_labels = (
-            torch.ones((batch_size, num_classes), dtype=torch.int64).to(device)
-            / num_classes
+        # mixed_batch_size = mixed_input.size(0)
+        # uniform_labels = (
+        #     torch.ones((mixed_batch_size, num_classes), dtype=torch.int64).to(device)
+        #     / num_classes
+        # )
+        # uniform_loss = F.cross_entropy(mixed_outputs, uniform_labels).to(device)
+        loss += (
+            0.5
+            * -(
+                mixed_outputs[len(in_set[0]) :].mean(1)
+                - torch.logsumexp(mixed_outputs[len(in_set[0]) :], dim=1)
+            ).mean()
         )
-        uniform_loss = criterion(mixed_outputs, uniform_labels).to(device)
 
         loss_pre = torch.pow(F.relu(max_id - max_ood), 2).mean()
-        margin_loss = torch.clamp(margin - loss_pre, min=0.0)
+        margin_loss = -0.5 * torch.clamp(margin - loss_pre, min=0.0)
 
-        total_loss = loss + uniform_loss + margin_loss
+        total_loss = loss + margin_loss
+        # print("Loss: {}, Margin loss: {}".format(loss, margin_loss))
         total_loss.backward()
 
         optimizer.step()
 
-        losses = total_loss / (batch_idx + 1)
+        scheduler.step()
+
+        # losses = total_loss / (batch_idx + 1)
 
         train_acc = predicted.eq(targets).sum().item() / targets.size(0)
         train_loss = total_loss.item()
@@ -268,7 +276,7 @@ def train(epoch):
             batch_idx,
             len(train_loader_in),
             "Loss: %.3f | Acc: %.3f%% (%d/%d)"
-            % (losses, train_acc * 100, correct, total),
+            % (train_loss, train_acc * 100, correct, total),
         )
     if args.plot_tsne:
         return (
@@ -342,27 +350,27 @@ for margin in [0.3]:
     for epoch in range(start_epoch, epochs):
         begin_epoch = time.time()
         print(f"Training with margin {margin}")
-        if epoch % 10 == 0:
-            if args.plot_tsne:
-                (
-                    train_id_features,
-                    train_ood_features,
-                    train_id_labels,
-                    train_ood_labels,
-                    train_acc,
-                    train_loss,
-                ) = train(epoch=epoch)
+        if args.plot_tsne:
+            (
+                train_id_features,
+                train_ood_features,
+                train_id_labels,
+                train_ood_labels,
+                train_acc,
+                train_loss,
+            ) = train(epoch=epoch)
 
-                fea_id, label_id = embedding(
-                    train_id_features, train_id_labels, select_train
-                )
-                fea_ood, label_ood = embedding(
-                    train_id_features, train_id_labels, select_train
-                )
+            fea_id, label_id = embedding(
+                train_id_features, train_id_labels, select_train
+            )
+            fea_ood, label_ood = embedding(
+                train_id_features, train_id_labels, select_train
+            )
 
-                total_features = (fea_id, fea_ood)
-                total_labels = (label_id, label_ood)
+            total_features = (fea_id, fea_ood)
+            total_labels = (label_id, label_ood)
 
+            if epoch % 10 == 0:
                 plot_features(
                     "logs/tsne_plot",
                     total_features,
@@ -373,8 +381,8 @@ for margin in [0.3]:
                         args.model, args.num_plot_samples
                     ),
                 )
-            else:
-                train_acc, train_loss = train(epoch=epoch)
+        else:
+            train_acc, train_loss = train(epoch=epoch)
         test_loss, test_acc = test(epoch=epoch)
         metrics.append([train_loss, test_loss, train_acc, test_acc])
 

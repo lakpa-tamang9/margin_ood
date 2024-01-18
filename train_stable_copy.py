@@ -262,6 +262,10 @@ def train():
         # Forward prop inputs
         _, outputs = net(data)
 
+        normalized_probs = torch.nn.functional.softmax(outputs, dim=1)
+        max_id, _ = torch.max(normalized_probs[: len(inset_tensor)], dim=1)
+        max_ood, _ = torch.max(normalized_probs[len(inset_tensor) :], dim=1)
+
         optimizer.zero_grad()
 
         loss = F.cross_entropy(outputs[: len(inset_tensor)], targets)
@@ -273,6 +277,9 @@ def train():
                 - torch.logsumexp(outputs[len(in_set[0]) :], dim=1)
             ).mean()
         )
+
+        loss_pre = torch.pow(F.relu(max_id - max_ood), 2).mean()
+        margin_loss = -0.5 * torch.clamp(margin - loss_pre, min=0.0)
 
         # confidence, _ = torch.max(torch.softmax(outputs, dim=1), dim=1)
         # Forward prop mixed inputs
@@ -286,14 +293,14 @@ def train():
         # margin_loss = torch.mean(
         #     torch.clamp(margin - (confidence - mixed_confidence), min=0.0)
         # )
-        # final_loss = loss + mix_loss
+        final_loss = loss + margin_loss
 
-        loss.backward()
+        final_loss.backward()
         optimizer.step()
 
         scheduler.step()
         # exponential moving average
-        loss_avg = loss_avg * 0.8 + float(loss) * 0.2
+        loss_avg = loss_avg * 0.8 + float(final_loss) * 0.2
 
     state["train_loss"] = loss_avg
 
