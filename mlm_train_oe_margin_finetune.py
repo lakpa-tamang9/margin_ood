@@ -321,10 +321,6 @@ def train():
         after_mix = OE_mixup(inputs, out_set_tensor)
         after_mix_list.append(after_mix.detach().cpu().numpy())
         mixed_input = torch.cat((inputs, after_mix), 0)
-        # todo: save after_mix tensor, inputs tensor, and out_set tensor and plot them distributionally
-        # todo: use np.save("name.npy", data)
-        # inputs, targets = inputs.to(device), targets.to(device)
-        # inputs_mix, targets_mix = inputs_mix.to(device), targets_mix.to(device)
         optimizer.zero_grad()
 
         features, outputs = model(inputs)

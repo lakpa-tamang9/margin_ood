@@ -47,6 +47,13 @@ parser.add_argument(
     help="Choose the outlier data",
 )
 parser.add_argument(
+    "--data_num",
+    "-dn",
+    type=int,
+    default=300000,
+    help="Total number of auxiliary images from RandImages",
+)
+parser.add_argument(
     "--calibration",
     "-c",
     default=True,
@@ -157,6 +164,7 @@ elif args.outlier_name == "300k":
                 trn.Normalize(mean, std),
             ]
         ),
+        data_num=args.data_num,
     )
 
 train_loader_in = torch.utils.data.DataLoader(
@@ -362,7 +370,7 @@ for dir in [logs_dir, checkpoint_dir]:
 print("Beginning Training\n")
 
 # Main loop
-for margin in [0.5]:
+for margin in [0.1, 0.2, 0.3, 0.4, 0.5]:
     with open(
         os.path.join(
             logs_dir,

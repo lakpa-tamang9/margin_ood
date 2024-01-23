@@ -23,12 +23,15 @@ parser.add_argument(
     type=str,
     required=True,
 )
+parser.add_argument(
+    "--dataset", "-d", type=str, default="cifar10", choices=["cifar10", "cifar100"]
+)
 args = parser.parse_args()
 
 test_bs = 200
 num_to_avg = 1
 out_as_pos = True
-dataset = "cifar10"
+dataset = args.dataset
 model = "wrn"
 
 std = [x / 255 for x in [63.0, 62.1, 66.7]]
@@ -176,7 +179,7 @@ def get_results(ood_loader, in_score, num_to_avg=num_to_avg):
 if model == "resnet":
     net = ResNet18(num_classes=num_classes)
 else:
-    net = WideResNet(depth=40, num_classes=10, widen_factor=2, dropRate=0.3)
+    net = WideResNet(depth=40, num_classes=num_classes, widen_factor=2, dropRate=0.3)
 
 net.to(device)
 
@@ -189,31 +192,37 @@ ood_loaders = {
     "textures": texture_loader,
     "places_365": places365_loader,
 }
-metrics = []
-for i in range(5, 6):
-    margin = i / 10
-    model_path = "checkpoint/{}/{}_{}_{}_ckpt9.pt".format(
-        model, dataset, args.exp_name, margin
-    )
-    net.load_state_dict(torch.load(model_path))
-    net.to(device)
-    net.eval()
-    in_score, accuracy = get_scores(test_loader, calc_id_acc=True, in_dist=True)
-    print(accuracy)
-    # id_accuracy = get_id_acc(cifar_loader)
-    # print(f"The id accuracy is {id_accuracy} %")
-    for ood_name, ood_loader in ood_loaders.items():
-        auroc, aupr, fpr = get_results(ood_loader, in_score)
-        print(f"Margin {margin} with {ood_name} ood, metrics : {[auroc, aupr, fpr]}")
-        metrics.append([margin, ood_name, auroc, aupr, fpr])
+for run in range(5):
+    metrics = []
+    for i in range(5, 6):
+        margin = i / 10
+        model_path = "checkpoint/{}/{}_{}_{}_ckpt9.pt".format(
+            model, dataset, args.exp_name, margin
+        )
+        net.load_state_dict(torch.load(model_path))
+        net.to(device)
+        net.eval()
+        in_score, accuracy = get_scores(test_loader, calc_id_acc=True, in_dist=True)
+        print(accuracy)
+        # id_accuracy = get_id_acc(cifar_loader)
+        # print(f"The id accuracy is {id_accuracy} %")
+        for ood_name, ood_loader in ood_loaders.items():
+            auroc, aupr, fpr = get_results(ood_loader, in_score)
+            print(
+                f"Margin {margin} with {ood_name} ood, metrics : {[auroc, aupr, fpr]}"
+            )
+            metrics.append([run, margin, ood_name, auroc, aupr, fpr])
 
-output_metrics_dir = os.path.join("./logs", "output_metrics")
-if not os.path.exists(output_metrics_dir):
-    os.makedirs(output_metrics_dir)
+    output_metrics_dir = os.path.join("./logs", "output_metrics")
+    if not os.path.exists(output_metrics_dir):
+        os.makedirs(output_metrics_dir)
 
-with open(
-    "{}/{}_{}_{}.csv".format(output_metrics_dir, model, dataset, args.exp_name), "w"
-) as f:
-    csvwriter = csv.writer(f)
-    csvwriter.writerow(["margin", "ood_dataset", "auroc", "aupr", "fpr"])
-    csvwriter.writerows(metrics)
+    with open(
+        "{}/{}_{}_{}_margin_{}.csv".format(
+            output_metrics_dir, model, dataset, args.exp_name, margin
+        ),
+        "w",
+    ) as f:
+        csvwriter = csv.writer(f)
+        csvwriter.writerow(["run", "margin", "ood_dataset", "auroc", "aupr", "fpr"])
+        csvwriter.writerows(metrics)
