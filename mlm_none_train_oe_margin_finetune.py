@@ -363,7 +363,6 @@ def train():
                     for i in range(5):
                         inputs_viz = inputs[i].cpu()
                         out_set_tensor_viz = out_set_tensor[i].cpu()
-                        after_mix_viz = after_mix[i].cpu()
                         mixed_input_viz = mixed_input[i].cpu()
 
                         # Save all id, ood, and mixed figs
@@ -376,12 +375,6 @@ def train():
                         save_fig(
                             name="out_set_tensor_viz",
                             img=out_set_tensor_viz,
-                            dir_path=dir_path,
-                            count=i,
-                        )
-                        save_fig(
-                            name="after_mix_viz",
-                            img=after_mix_viz,
                             dir_path=dir_path,
                             count=i,
                         )
