@@ -176,7 +176,7 @@ outlier_data = RandomImages(
 )
 train_loader_out = DataLoader(
     outlier_data,
-    batch_size=256,
+    batch_size=128,
     shuffle=False,
     num_workers=12,
     pin_memory=True,
@@ -267,7 +267,7 @@ def test():
             inputs, targets = inputs.to(device), targets.to(device)
             total += targets.size(0)
 
-            _, outputs = model(inputs)
+            outputs = model(inputs)
             loss = criterion(outputs, targets)
             loss += loss.item()
 
@@ -318,17 +318,15 @@ def train():
         out_set_tensor_list.append(out_set_tensor.detach().cpu().numpy())
         ood_targets = torch.tensor([10] * len(out_set_tensor)).to(device)
 
+        if inputs.size()[0] != out_set_tensor.size()[0]:
+            length = min(inputs.size()[0], out_set_tensor.size()[0])
+            inputs = inputs[:length]
+            out_set_tensor = out_set_tensor[:length]
+
         mixed_input = torch.cat((inputs, out_set_tensor), 0)
         optimizer.zero_grad()
 
-        features, outputs = model(inputs)
-
-        if args.plot_tsne:
-            train_id_features.append(features[: len(inputs)])
-            train_ood_features.append(features[len(inputs) :])
-
-            train_id_labels.append(targets)
-            train_ood_labels.append(ood_targets)
+        outputs = model(inputs)
 
         loss = criterion(outputs, targets)
 
@@ -348,7 +346,7 @@ def train():
                 mixed_input_pil = to_pil_image(unnormalize(mixed_input[i], mean, std))
                 mixed_input[i] = new_trans(mixed_input_pil)
 
-        _, mixed_outputs = model(mixed_input)
+        mixed_outputs = model(mixed_input)
         _, mixed_preds = torch.max(mixed_outputs.data, 1)
 
         mixed_prob = torch.max(torch.softmax(mixed_outputs[0], dim=0)).item()
@@ -433,8 +431,6 @@ def train():
 
     if args.plot_tsne:
         return train_id_features, train_ood_features, train_id_labels, train_ood_labels
-    else:
-        return None
 
 
 if args.dataset == "cifar10":
@@ -455,18 +451,17 @@ elif args.dataset == "cifar100":
 perm_train = torch.randperm(train_loader.__len__() + train_loader_out.__len__())
 select_train = perm_train[: args.num_plot_samples]
 
-epochs = 10
+epochs = 1
 margins = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
 for margin in margins:
     for epoch in range(epochs):
-        (
-            train_id_features,
-            train_ood_features,
-            train_id_labels,
-            train_ood_labels,
-        ) = train()
-
         if args.plot_tsne:
+            (
+                train_id_features,
+                train_ood_features,
+                train_id_labels,
+                train_ood_labels,
+            ) = train()
             fea_id, label_id = embedding(
                 train_id_features, train_id_labels, select_train
             )
@@ -485,6 +480,9 @@ for margin in margins:
                 epoch,
                 "train_oe_finetune_{}_samples/".format(args.num_plot_samples),
             )
+        else:
+            train()
+
         test()
 
         do_eval = epoch == epochs - 1
@@ -531,7 +529,7 @@ for margin in margins:
         ).T
         final_df = pd.concat([df, mean_row, avg_row], axis=0, ignore_index=True)
         final_df.to_csv(
-            "logs/pytorch_ood/fine_tuning_results_six_bencmark_test_datasets/{}_{}_margin_{}.csv".format(
+            "logs/pytorch_ood/fine_tuning_results_six_bencmark_test_datasets/v2/{}_{}_margin_{}.csv".format(
                 args.exp_name, args.dataset, margin
             )
         )
