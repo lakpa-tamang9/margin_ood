@@ -19,4 +19,4 @@ conda activate /home/s223127906/.conda/envs/cssr
 module load python
 
 cd /home/s223127906/deakin_devs/margin_ood
-srun python train_with_outlier_loader.py
+srun python mlm_none_train_oe_margin_finetune.py -d cifar100 -en msp_no_mlm

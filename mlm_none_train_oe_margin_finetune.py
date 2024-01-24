@@ -51,6 +51,13 @@ parser.add_argument(
     help="Total number of trials to average the result.",
 )
 parser.add_argument(
+    "--detectors",
+    type=str,
+    default="MSP",
+    choices=["msp", "mahalanobis", "maxlogit", "energy"],
+    help="Name of detector to use.",
+)
+parser.add_argument(
     "--save_img",
     type=bool,
     default=False,
@@ -110,7 +117,6 @@ ood_datasets = [
     "svhn",
     "isun",
     LSUNCrop,
-    LSUNResize,
     Places365,
 ]
 datasets = {}
@@ -145,22 +151,14 @@ model = (
 
 # Create OOD detector
 detectors = {}
-# detectors["Entropy"] = Entropy(model)
-# detectors["ViM"] = ViM(model.features, d=64, w=model.fc.weight, b=model.fc.bias)
-# detectors["Mahalanobis+ODIN"] = Mahalanobis(
-#     model.features, norm_std=norm_std, eps=0.002
-# )
-# detectors["Mahalanobis"] = Mahalanobis(model.features)
-# detectors["KLMatching"] = KLMatching(model)
-# detectors["SHE"] = SHE(model.features, model.fc)
-detectors["MSP"] = MaxSoftmax(model)
-# detectors["EnergyBased"] = EnergyBased(model)
-# detectors["MaxLogit"] = MaxLogit(model)
-# detectors["ODIN"] = ODIN(model, norm_std=norm_std, eps=0.002)
-# detectors["DICE"] = DICE(
-#     model=model.features, w=model.fc.weight, b=model.fc.bias, p=0.65
-# )
-# detectors["RMD"] = RMD(model.features)
+if args.detectors == "msp":
+    detectors["MSP"] = MaxSoftmax(model)
+elif args.detectors == "mahalanobis":
+    detectors["Mahalanobis"] = Mahalanobis(model.features)
+elif args.detectors == "maxlogit":
+    detectors["MaxLogit"] = MaxLogit(model)
+elif args.detectors == "energy":
+    detectors["EnergyBased"] = EnergyBased(model)
 
 outlier_data = RandomImages(
     transform=tvt.Compose(
@@ -236,7 +234,6 @@ def evaluate():
         for detector_name, detector in detectors.items():
             results = []
             print(f"> Evaluating {detector_name}")
-            trial_results = []
             for num in range(args.num_trials):
                 for dataset_name, loader in datasets.items():
                     print(f"--> {dataset_name}")
@@ -252,8 +249,7 @@ def evaluate():
                     r.update(metrics.compute())
 
                     results.append(r)
-                trial_results.append(results)
-    return trial_results
+    return results
 
 
 def test():
@@ -450,9 +446,9 @@ elif args.dataset == "cifar100":
 
 perm_train = torch.randperm(train_loader.__len__() + train_loader_out.__len__())
 select_train = perm_train[: args.num_plot_samples]
-
-epochs = 1
-margins = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+dataset = args.dataset
+epochs = 10
+margins = [0.1, 0.2, 0.3, 0.4, 0.5]
 for margin in margins:
     for epoch in range(epochs):
         if args.plot_tsne:
@@ -486,50 +482,55 @@ for margin in margins:
         test()
 
         do_eval = epoch == epochs - 1
+        trial_results = []
         if do_eval and not args.plot_tsne:
-            trial_results = evaluate()
+            for i in range(args.num_trials):
+                result = evaluate()
+                trial_results.append(result)
+    print(f"Margin: {margin}")
     if not args.plot_tsne:
         all_auroc = []
         all_aupr_in = []
         all_aupr_out = []
         all_fpr95 = []
-        for results in trial_results:
-            # calculate mean scores over all datasets, use percent
-            df = pd.DataFrame(results)
+        # for results in trial_results:
+        dfs = [pd.DataFrame(results) for results in trial_results]
+        for i, df in enumerate(dfs):
+            print(f"The result for {i} th trial.")
+            print(df)
             auroc = df.groupby("Detector")["AUROC"].mean() * 100
             aupr_in = df.groupby("Detector")["AUPR-IN"].mean() * 100
             aupr_out = df.groupby("Detector")["AUPR-OUT"].mean() * 100
             fpr95 = df.groupby("Detector")["FPR95TPR"].mean() * 100
-            all_auroc.append(auroc.values[0])
-            all_aupr_in.append(aupr_in.values[0])
-            all_aupr_out.append(aupr_out.values[0])
-            all_fpr95.append(fpr95.values[0])
 
-        mean_row = pd.DataFrame(
-            [
+            mean_df = [
                 "MSP",
-                "Mean Values",
-                "Mean Val Over OODs",
-                auroc.values[0],
-                aupr_in.values[0],
-                aupr_out.values[0],
-                fpr95.values[0],
+                "Mean.",
+                i,
+                round(auroc.values[0], 2),
+                round(aupr_in.values[0], 2),
+                round(aupr_out.values[0], 2),
+                round(fpr95.values[0], 2),
             ]
-        ).T
-        avg_row = pd.DataFrame(
-            [
-                "MSP",
-                "Five Trial Avg.",
-                "Average",
-                np.mean(all_auroc),
-                np.mean(all_aupr_in),
-                np.mean(all_aupr_out),
-                np.mean(all_fpr95),
-            ]
-        ).T
-        final_df = pd.concat([df, mean_row, avg_row], axis=0, ignore_index=True)
-        final_df.to_csv(
-            "logs/pytorch_ood/fine_tuning_results_six_bencmark_test_datasets/v2/{}_{}_margin_{}.csv".format(
-                args.exp_name, args.dataset, margin
+            print(f"Mean auroc for {i}th trial: {round(auroc.values[0], 2)}")
+            print(f"Mean aupr_in for {i}th trial: {round(aupr_in.values[0], 2)}")
+            print(f"Mean aupr_out for {i}th trial: {round(aupr_out.values[0], 2)}")
+            print(f"Mean fpr95 for {i}th trial: {round(fpr95.values[0], 2)}")
+
+            df.loc[len(df)] = mean_df
+
+            all_auroc.append(round(auroc.values[0], 2))
+            all_aupr_in.append(round(aupr_in.values[0], 2))
+            all_aupr_out.append(round(aupr_out.values[0], 2))
+            all_fpr95.append(round(fpr95.values[0], 2))
+
+            df.to_csv(
+                "logs/pytorch_ood/fine_tuning_results_six_bencmark_test_datasets/v3/{}_{}_margin_{}_trial_{}.csv".format(
+                    args.dataset, args.detectors, margin, i
+                )
             )
-        )
+
+        print(f"Five trial Average AUROC: {all_auroc[0]} ")
+        print(f"Five trial Average AUPR_IN: {all_aupr_in[0]} ")
+        print(f"Five trial Average AUPR_OUT: {all_aupr_out[0]} ")
+        print(f"Five trial Average FPR95: {all_fpr95[0]} ")
