@@ -448,7 +448,7 @@ perm_train = torch.randperm(train_loader.__len__() + train_loader_out.__len__())
 select_train = perm_train[: args.num_plot_samples]
 dataset = args.dataset
 epochs = 10
-margins = [0.1, 0.2, 0.3, 0.4, 0.5]
+margins = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
 for margin in margins:
     for epoch in range(epochs):
         if args.plot_tsne:
