@@ -22,7 +22,7 @@ from utils import *
 from dataset_utils.randimages import RandomImages
 import torch.nn.functional as F
 from PIL import Image
-
+import logging
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mean = [x / 255 for x in [125.3, 123.0, 113.9]]
@@ -49,6 +49,13 @@ parser.add_argument(
     type=int,
     default=5,
     help="Total number of trials to average the result.",
+)
+parser.add_argument(
+    "--detectors",
+    type=str,
+    default="MSP",
+    choices=["msp", "mahalanobis", "maxlogit", "energy"],
+    help="Name of detector to use.",
 )
 parser.add_argument(
     "--save_img",
@@ -109,15 +116,16 @@ ood_datasets = [
     Textures,
     "svhn",
     "isun",
+    TinyImageNetCrop,
+    TinyImageNetResize,
     LSUNCrop,
-    LSUNResize,
     Places365,
 ]
 datasets = {}
 for ood_dataset in ood_datasets:
     if ood_dataset == "svhn":
         dataset_out_test = dset.ImageFolder(
-            root="data/svhn", transform=trans, target_transform=ToUnknown()
+            root="data/svhn/test", transform=trans, target_transform=ToUnknown()
         )
     elif ood_dataset == "isun":
         dataset_out_test = dset.ImageFolder(
@@ -145,22 +153,14 @@ model = (
 
 # Create OOD detector
 detectors = {}
-# detectors["Entropy"] = Entropy(model)
-# detectors["ViM"] = ViM(model.features, d=64, w=model.fc.weight, b=model.fc.bias)
-# detectors["Mahalanobis+ODIN"] = Mahalanobis(
-#     model.features, norm_std=norm_std, eps=0.002
-# )
-# detectors["Mahalanobis"] = Mahalanobis(model.features)
-# detectors["KLMatching"] = KLMatching(model)
-# detectors["SHE"] = SHE(model.features, model.fc)
-detectors["MSP"] = MaxSoftmax(model)
-# detectors["EnergyBased"] = EnergyBased(model)
-# detectors["MaxLogit"] = MaxLogit(model)
-# detectors["ODIN"] = ODIN(model, norm_std=norm_std, eps=0.002)
-# detectors["DICE"] = DICE(
-#     model=model.features, w=model.fc.weight, b=model.fc.bias, p=0.65
-# )
-# detectors["RMD"] = RMD(model.features)
+if args.detectors == "msp":
+    detectors["MSP"] = MaxSoftmax(model)
+elif args.detectors == "mahalanobis":
+    detectors["Mahalanobis"] = Mahalanobis(model.features)
+elif args.detectors == "maxlogit":
+    detectors["MaxLogit"] = MaxLogit(model)
+elif args.detectors == "energy":
+    detectors["EnergyBased"] = EnergyBased(model)
 
 outlier_data = RandomImages(
     transform=tvt.Compose(
@@ -236,24 +236,20 @@ def evaluate():
         for detector_name, detector in detectors.items():
             results = []
             print(f"> Evaluating {detector_name}")
-            trial_results = []
-            for num in range(args.num_trials):
-                for dataset_name, loader in datasets.items():
-                    print(f"--> {dataset_name}")
-                    metrics = OODMetrics()
-                    for x, y in loader:
-                        metrics.update(detector(x.to(device)), y.to(device))
+            for dataset_name, loader in datasets.items():
+                print(f"--> {dataset_name}")
+                metrics = OODMetrics()
+                for x, y in loader:
+                    metrics.update(detector(x.to(device)), y.to(device))
 
-                    r = {
-                        "Detector": detector_name,
-                        "Dataset": dataset_name,
-                        "Trial no.": num,
-                    }
-                    r.update(metrics.compute())
+                r = {
+                    "Detector": detector_name,
+                    "Dataset": dataset_name,
+                }
+                r.update(metrics.compute())
 
-                    results.append(r)
-                trial_results.append(results)
-    return trial_results
+                results.append(r)
+    return results
 
 
 def test():
@@ -267,7 +263,7 @@ def test():
             inputs, targets = inputs.to(device), targets.to(device)
             total += targets.size(0)
 
-            _, outputs = model(inputs)
+            outputs = model(inputs)
             loss = criterion(outputs, targets)
             loss += loss.item()
 
@@ -323,14 +319,7 @@ def train():
         mixed_input = torch.cat((inputs, after_mix), 0)
         optimizer.zero_grad()
 
-        features, outputs = model(inputs)
-
-        if args.plot_tsne:
-            train_id_features.append(features[: len(inputs)])
-            train_ood_features.append(features[len(inputs) :])
-
-            train_id_labels.append(targets)
-            train_ood_labels.append(ood_targets)
+        outputs = model(inputs)
 
         loss = criterion(outputs, targets)
 
@@ -350,7 +339,7 @@ def train():
                 mixed_input_pil = to_pil_image(unnormalize(mixed_input[i], mean, std))
                 mixed_input[i] = new_trans(mixed_input_pil)
 
-        _, mixed_outputs = model(mixed_input)
+        mixed_outputs = model(mixed_input)
         _, mixed_preds = torch.max(mixed_outputs.data, 1)
 
         mixed_prob = torch.max(torch.softmax(mixed_outputs[0], dim=0)).item()
@@ -396,7 +385,7 @@ def train():
 
         normalized_probs = torch.nn.functional.softmax(mixed_outputs, dim=1)
         max_id, _ = torch.max(normalized_probs[: len(inputs)], dim=1)
-        max_ood, _ = torch.max(normalized_probs[len(inputs) :], dim=1)
+        max_ood = torch.mean(normalized_probs[len(inputs) :], dim=1)
 
         batch_size = mixed_input.size(0)
         uniform_labels = (
@@ -406,7 +395,7 @@ def train():
         uniform_loss = criterion(mixed_outputs, uniform_labels).to(device)
 
         loss_pre = torch.pow(F.relu(max_id - max_ood), 2).mean()
-        margin_loss = torch.clamp(margin - loss_pre, min=0.0)
+        margin_loss = -0.5 * torch.clamp(margin - loss_pre, min=0.0)
 
         total_loss = loss + uniform_loss + margin_loss
         total_loss.backward()
@@ -460,22 +449,20 @@ elif args.dataset == "cifar100":
     val_data = CIFAR100(root="data", train=False, download=True, transform=trans)
     val_loader = DataLoader(val_data, batch_size=128, num_workers=12)
 
-
 perm_train = torch.randperm(train_loader.__len__() + train_loader_out.__len__())
 select_train = perm_train[: args.num_plot_samples]
-
-epochs = 10
-margins = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+dataset = args.dataset
+epochs = 1
+margins = [0.1]
 for margin in margins:
     for epoch in range(epochs):
-        (
-            train_id_features,
-            train_ood_features,
-            train_id_labels,
-            train_ood_labels,
-        ) = train()
-
         if args.plot_tsne:
+            (
+                train_id_features,
+                train_ood_features,
+                train_id_labels,
+                train_ood_labels,
+            ) = train()
             fea_id, label_id = embedding(
                 train_id_features, train_id_labels, select_train
             )
@@ -494,53 +481,67 @@ for margin in margins:
                 epoch,
                 "train_oe_finetune_{}_samples/".format(args.num_plot_samples),
             )
+        else:
+            train()
+
         test()
 
         do_eval = epoch == epochs - 1
+        trial_results = []
         if do_eval and not args.plot_tsne:
-            trial_results = evaluate()
+            for i in range(args.num_trials):
+                result = evaluate()
+                trial_results.append(result)
+    logging.info(f"Margin: {margin}")
     if not args.plot_tsne:
         all_auroc = []
         all_aupr_in = []
         all_aupr_out = []
         all_fpr95 = []
-        for results in trial_results:
-            # calculate mean scores over all datasets, use percent
-            df = pd.DataFrame(results)
+        # for results in trial_results:
+        dfs = [pd.DataFrame(results) for results in trial_results]
+        for i, df in enumerate(dfs):
+            logging.basicConfig(filename="logs/results.log", level=logging.INFO)
+            logging.info(f"The result for {i} th trial.")
+            logging.info(df)
             auroc = df.groupby("Detector")["AUROC"].mean() * 100
             aupr_in = df.groupby("Detector")["AUPR-IN"].mean() * 100
             aupr_out = df.groupby("Detector")["AUPR-OUT"].mean() * 100
             fpr95 = df.groupby("Detector")["FPR95TPR"].mean() * 100
-            all_auroc.append(auroc.values[0])
-            all_aupr_in.append(aupr_in.values[0])
-            all_aupr_out.append(aupr_out.values[0])
-            all_fpr95.append(fpr95.values[0])
 
-        mean_row = pd.DataFrame(
-            [
+            mean_df = [
                 "MSP",
-                "Mean Values",
-                "Mean Val Over OODs",
-                auroc.values[0],
-                aupr_in.values[0],
-                aupr_out.values[0],
-                fpr95.values[0],
+                "Mean.",
+                round(auroc.values[0], 2),
+                round(aupr_in.values[0], 2),
+                round(aupr_out.values[0], 2),
+                round(fpr95.values[0], 2),
             ]
-        ).T
-        avg_row = pd.DataFrame(
-            [
-                "MSP",
-                "Five Trial Avg.",
-                "Average",
-                np.mean(all_auroc),
-                np.mean(all_aupr_in),
-                np.mean(all_aupr_out),
-                np.mean(all_fpr95),
-            ]
-        ).T
-        final_df = pd.concat([df, mean_row, avg_row], axis=0, ignore_index=True)
-        final_df.to_csv(
-            "logs/pytorch_ood/fine_tuning_results_six_bencmark_test_datasets/{}_{}_margin_{}.csv".format(
-                args.exp_name, args.dataset, margin
+            print(df)
+            print(mean_df)
+            logging.info(f"Mean auroc for {i}th trial: {round(auroc.values[0], 2)}")
+            logging.info(f"Mean aupr_in for {i}th trial: {round(aupr_in.values[0], 2)}")
+            logging.info(
+                f"Mean aupr_out for {i}th trial: {round(aupr_out.values[0], 2)}"
             )
-        )
+            logging.info(f"Mean fpr95 for {i}th trial: {round(fpr95.values[0], 2)}")
+
+            all_auroc.append(round(auroc.values[0], 2))
+            all_aupr_in.append(round(aupr_in.values[0], 2))
+            all_aupr_out.append(round(aupr_out.values[0], 2))
+            all_fpr95.append(round(fpr95.values[0], 2))
+
+            try:
+                df.loc[len(df)] = mean_df
+            except Exception as e:
+                logging.error(e)
+            df.to_csv(
+                "logs/pytorch_ood/fine_tuning_results_six_bencmark_test_datasets/v4/mlm_{}_{}_margin_{}_trial_{}.csv".format(
+                    args.dataset, args.detectors, margin, i
+                )
+            )
+
+        logging.info(f"Five trial Average AUROC: {all_auroc[0]} ")
+        logging.info(f"Five trial Average AUPR_IN: {all_aupr_in[0]} ")
+        logging.info(f"Five trial Average AUPR_OUT: {all_aupr_out[0]} ")
+        logging.info(f"Five trial Average FPR95: {all_fpr95[0]} ")

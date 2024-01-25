@@ -22,7 +22,8 @@ from utils import *
 from dataset_utils.randimages import RandomImages
 import torch.nn.functional as F
 from PIL import Image
-
+import logging
+import dataset_utils.svhn_loader as svhn
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mean = [x / 255 for x in [125.3, 123.0, 113.9]]
@@ -234,21 +235,19 @@ def evaluate():
         for detector_name, detector in detectors.items():
             results = []
             print(f"> Evaluating {detector_name}")
-            for num in range(args.num_trials):
-                for dataset_name, loader in datasets.items():
-                    print(f"--> {dataset_name}")
-                    metrics = OODMetrics()
-                    for x, y in loader:
-                        metrics.update(detector(x.to(device)), y.to(device))
+            for dataset_name, loader in datasets.items():
+                print(f"--> {dataset_name}")
+                metrics = OODMetrics()
+                for x, y in loader:
+                    metrics.update(detector(x.to(device)), y.to(device))
 
-                    r = {
-                        "Detector": detector_name,
-                        "Dataset": dataset_name,
-                        "Trial no.": num,
-                    }
-                    r.update(metrics.compute())
+                r = {
+                    "Detector": detector_name,
+                    "Dataset": dataset_name,
+                }
+                r.update(metrics.compute())
 
-                    results.append(r)
+                results.append(r)
     return results
 
 
@@ -383,15 +382,17 @@ def train():
         max_id, _ = torch.max(normalized_probs[: len(inputs)], dim=1)
         max_ood, _ = torch.max(normalized_probs[len(inputs) :], dim=1)
 
-        batch_size = mixed_input.size(0)
+        batch_size = out_set_tensor.size(0)
         uniform_labels = (
             torch.ones((batch_size, num_classes), dtype=torch.int64).to(device)
             / num_classes
         )
-        uniform_loss = criterion(mixed_outputs, uniform_labels).to(device)
+        uniform_loss = criterion(mixed_outputs[len(inputs) :], uniform_labels).to(
+            device
+        )
 
         loss_pre = torch.pow(F.relu(max_id - max_ood), 2).mean()
-        margin_loss = torch.clamp(margin - loss_pre, min=0.0)
+        margin_loss = 0.5 * torch.clamp(margin - loss_pre, min=0.0)
 
         total_loss = loss + uniform_loss + margin_loss
         total_loss.backward()
@@ -447,8 +448,8 @@ elif args.dataset == "cifar100":
 perm_train = torch.randperm(train_loader.__len__() + train_loader_out.__len__())
 select_train = perm_train[: args.num_plot_samples]
 dataset = args.dataset
-epochs = 10
-margins = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+epochs = 1
+margins = [0.1]
 for margin in margins:
     for epoch in range(epochs):
         if args.plot_tsne:
@@ -487,7 +488,7 @@ for margin in margins:
             for i in range(args.num_trials):
                 result = evaluate()
                 trial_results.append(result)
-    print(f"Margin: {margin}")
+    logging.info(f"Margin: {margin}")
     if not args.plot_tsne:
         all_auroc = []
         all_aupr_in = []
@@ -496,8 +497,9 @@ for margin in margins:
         # for results in trial_results:
         dfs = [pd.DataFrame(results) for results in trial_results]
         for i, df in enumerate(dfs):
-            print(f"The result for {i} th trial.")
-            print(df)
+            logging.basicConfig(filename="logs/results.log", level=logging.INFO)
+            logging.info(f"The result for {i} th trial.")
+            logging.info(df)
             auroc = df.groupby("Detector")["AUROC"].mean() * 100
             aupr_in = df.groupby("Detector")["AUPR-IN"].mean() * 100
             aupr_out = df.groupby("Detector")["AUPR-OUT"].mean() * 100
@@ -506,31 +508,36 @@ for margin in margins:
             mean_df = [
                 "MSP",
                 "Mean.",
-                i,
                 round(auroc.values[0], 2),
                 round(aupr_in.values[0], 2),
                 round(aupr_out.values[0], 2),
                 round(fpr95.values[0], 2),
             ]
-            print(f"Mean auroc for {i}th trial: {round(auroc.values[0], 2)}")
-            print(f"Mean aupr_in for {i}th trial: {round(aupr_in.values[0], 2)}")
-            print(f"Mean aupr_out for {i}th trial: {round(aupr_out.values[0], 2)}")
-            print(f"Mean fpr95 for {i}th trial: {round(fpr95.values[0], 2)}")
-
-            df.loc[len(df)] = mean_df
+            print(df)
+            print(mean_df)
+            logging.info(f"Mean auroc for {i}th trial: {round(auroc.values[0], 2)}")
+            logging.info(f"Mean aupr_in for {i}th trial: {round(aupr_in.values[0], 2)}")
+            logging.info(
+                f"Mean aupr_out for {i}th trial: {round(aupr_out.values[0], 2)}"
+            )
+            logging.info(f"Mean fpr95 for {i}th trial: {round(fpr95.values[0], 2)}")
 
             all_auroc.append(round(auroc.values[0], 2))
             all_aupr_in.append(round(aupr_in.values[0], 2))
             all_aupr_out.append(round(aupr_out.values[0], 2))
             all_fpr95.append(round(fpr95.values[0], 2))
 
+            try:
+                df.loc[len(df)] = mean_df
+            except Exception as e:
+                logging.error(e)
             df.to_csv(
-                "logs/pytorch_ood/fine_tuning_results_six_bencmark_test_datasets/v3/{}_{}_margin_{}_trial_{}.csv".format(
+                "logs/pytorch_ood/fine_tuning_results_six_bencmark_test_datasets/v6/{}_{}_margin_{}_trial_{}.csv".format(
                     args.dataset, args.detectors, margin, i
                 )
             )
 
-        print(f"Five trial Average AUROC: {all_auroc[0]} ")
-        print(f"Five trial Average AUPR_IN: {all_aupr_in[0]} ")
-        print(f"Five trial Average AUPR_OUT: {all_aupr_out[0]} ")
-        print(f"Five trial Average FPR95: {all_fpr95[0]} ")
+        logging.info(f"Five trial Average AUROC: {all_auroc[0]} ")
+        logging.info(f"Five trial Average AUPR_IN: {all_aupr_in[0]} ")
+        logging.info(f"Five trial Average AUPR_OUT: {all_aupr_out[0]} ")
+        logging.info(f"Five trial Average FPR95: {all_fpr95[0]} ")
