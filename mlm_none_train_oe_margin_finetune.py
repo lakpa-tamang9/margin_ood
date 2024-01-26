@@ -286,6 +286,7 @@ def save_fig(name, img, dir_path, count):
 
 
 def train():
+    global losses_val
     print("\nEpoch: %d" % epoch)
     train_loss = 0
     correct = 0
@@ -305,6 +306,7 @@ def train():
     train_id_labels = []
     train_ood_labels = []
 
+    losses_val = []
     for batch_idx, (in_set, out_set) in enumerate(zip(train_loader, train_loader_out)):
         inputs = in_set[0].to(device)
         inputs_list.append(inputs.detach().cpu().numpy())
@@ -382,14 +384,12 @@ def train():
         max_id, _ = torch.max(normalized_probs[: len(inputs)], dim=1)
         max_ood, _ = torch.max(normalized_probs[len(inputs) :], dim=1)
 
-        batch_size = out_set_tensor.size(0)
+        batch_size = mixed_input.size(0)
         uniform_labels = (
             torch.ones((batch_size, num_classes), dtype=torch.int64).to(device)
             / num_classes
         )
-        uniform_loss = criterion(mixed_outputs[len(inputs) :], uniform_labels).to(
-            device
-        )
+        uniform_loss = criterion(mixed_outputs, uniform_labels).to(device)
 
         loss_pre = torch.pow(F.relu(max_id - max_ood), 2).mean()
         margin_loss = 0.5 * torch.clamp(margin - loss_pre, min=0.0)
@@ -400,6 +400,7 @@ def train():
         optimizer.step()
 
         losses = total_loss / (batch_idx + 1)
+        losses_val.append(losses)
 
         train_acc = predicted.eq(targets).sum().item() / targets.size(0)
         train_loss = total_loss.item()
@@ -448,8 +449,8 @@ elif args.dataset == "cifar100":
 perm_train = torch.randperm(train_loader.__len__() + train_loader_out.__len__())
 select_train = perm_train[: args.num_plot_samples]
 dataset = args.dataset
-epochs = 1
-margins = [0.1]
+epochs = 2
+margins = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
 for margin in margins:
     for epoch in range(epochs):
         if args.plot_tsne:
@@ -479,6 +480,7 @@ for margin in margins:
             )
         else:
             train()
+        print(losses_val)
 
         test()
 
