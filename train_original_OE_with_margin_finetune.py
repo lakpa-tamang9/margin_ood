@@ -42,8 +42,8 @@ parser.add_argument(
     "--outlier_name",
     "-on",
     type=str,
-    default="300k",
-    choices=["300k", "imgnet32"],
+    default="tinyimagenet",
+    choices=["300k", "imgnet32", "tinyimagenet"],
     help="Choose the outlier data",
 )
 parser.add_argument(
@@ -56,7 +56,7 @@ parser.add_argument(
 parser.add_argument(
     "--calibration",
     "-c",
-    default=True,
+    default=False,
     help="Train a model to be used for calibration. This holds out some data for validation.",
 )
 # Optimization options
@@ -166,6 +166,19 @@ elif args.outlier_name == "300k":
         ),
         data_num=args.data_num,
     )
+elif args.outlier_name == "tinyimagenet":
+    ood_data = dset.ImageFolder(
+        root="DOE/data/tiny-imagenet-200/train",
+        transform=trn.Compose(
+            [
+                trn.Resize(32),
+                trn.RandomCrop(32, padding=4),
+                trn.RandomHorizontalFlip(),
+                trn.ToTensor(),
+                trn.Normalize(mean, std),
+            ]
+        ),
+    )
 
 train_loader_in = torch.utils.data.DataLoader(
     train_data_in,
@@ -208,7 +221,7 @@ if args.load != "":
         + calib_indicator
         + "_"
         + args.model
-        + "_baseline_epoch_"
+        + "_pretrained_epoch_"
         + "99"
         + ".pt",
     )
@@ -286,9 +299,15 @@ def train():
     ):
         inset_tensor = in_set[0].to(device)
         out_set_tensor = out_set[0].to(device)
-        mixed_inputs = OE_mixup(inset_tensor, out_set_tensor)
 
-        data = torch.cat((inset_tensor, mixed_inputs), 0)
+        if inset_tensor.size()[0] != out_set_tensor.size()[0]:
+            length = min(inset_tensor.size()[0], out_set_tensor.size()[0])
+            inset_tensor = inset_tensor[:length]
+            out_set_tensor = out_set_tensor[:length]
+
+        # mixed_inputs = OE_mixup(inset_tensor, out_set_tensor)
+
+        data = torch.cat((inset_tensor, out_set_tensor), 0)
         targets = in_set[1].to(device)
 
         # Forward prop inputs
@@ -370,7 +389,7 @@ for dir in [logs_dir, checkpoint_dir]:
 print("Beginning Training\n")
 
 # Main loop
-for margin in [0.1, 0.2, 0.3, 0.4, 0.5]:
+for margin in [0.3]:
     with open(
         os.path.join(
             logs_dir,

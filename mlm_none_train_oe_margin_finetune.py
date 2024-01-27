@@ -24,6 +24,7 @@ import torch.nn.functional as F
 from PIL import Image
 import logging
 import dataset_utils.svhn_loader as svhn
+from dataset_utils.resized_imagenet_loader import ImageNetDownSample
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mean = [x / 255 for x in [125.3, 123.0, 113.9]]
@@ -48,7 +49,7 @@ parser.add_argument(
 parser.add_argument(
     "--num_trials",
     type=int,
-    default=5,
+    default=1,
     help="Total number of trials to average the result.",
 )
 parser.add_argument(
@@ -63,6 +64,14 @@ parser.add_argument(
     type=bool,
     default=False,
     help="Save the input and outlier images.",
+)
+parser.add_argument(
+    "--outlier_name",
+    "-on",
+    type=str,
+    default="tinyimagenet",
+    choices=["300k", "imgnet32", "tinyimagenet"],
+    help="Choose the outlier data",
 )
 parser.add_argument(
     "--plot_tsne",
@@ -118,17 +127,39 @@ ood_datasets = [
     "svhn",
     "isun",
     LSUNCrop,
-    Places365,
+    "places_365",
 ]
 datasets = {}
 for ood_dataset in ood_datasets:
     if ood_dataset == "svhn":
         dataset_out_test = dset.ImageFolder(
-            root="data/svhn", transform=trans, target_transform=ToUnknown()
+            root="data/svhn",
+            transform=tvt.Compose(
+                [
+                    tvt.Resize(32),
+                    tvt.CenterCrop(32),
+                    tvt.ToTensor(),
+                    tvt.Normalize(mean, std),
+                ]
+            ),
+            target_transform=ToUnknown(),
         )
     elif ood_dataset == "isun":
         dataset_out_test = dset.ImageFolder(
             root="data/iSUN", transform=trans, target_transform=ToUnknown()
+        )
+    elif ood_dataset == "places_365":
+        dataset_out_test = dset.ImageFolder(
+            root="data/places365_standard",
+            transform=tvt.Compose(
+                [
+                    tvt.Resize(32),
+                    tvt.CenterCrop(32),
+                    tvt.ToTensor(),
+                    tvt.Normalize(mean, std),
+                ]
+            ),
+            target_transform=ToUnknown(),
         )
     else:
         dataset_out_test = ood_dataset(
@@ -138,7 +169,7 @@ for ood_dataset in ood_datasets:
     test_loader = DataLoader(
         dataset_in_test + dataset_out_test, batch_size=256, num_workers=12
     )
-    if ood_dataset in ["svhn", "isun"]:
+    if ood_dataset in ["svhn", "isun", "places_365"]:
         datasets[ood_dataset] = test_loader
     else:
         datasets[ood_dataset.__name__] = test_loader
@@ -161,18 +192,47 @@ elif args.detectors == "maxlogit":
 elif args.detectors == "energy":
     detectors["EnergyBased"] = EnergyBased(model)
 
-outlier_data = RandomImages(
-    transform=tvt.Compose(
-        [
-            tvt.ToTensor(),
-            tvt.ToPILImage(),
-            tvt.RandomCrop(32, padding=4),
-            tvt.RandomHorizontalFlip(),
-            tvt.ToTensor(),
-            tvt.Normalize(mean, std),
-        ]
-    ),
-)
+
+if args.outlier_name == "imgnet32":
+    outlier_data = ImageNetDownSample(
+        root="./data/ImageNet32",
+        transform=tvt.Compose(
+            [
+                tvt.ToTensor(),
+                tvt.ToPILImage(),
+                tvt.RandomCrop(32, padding=4),
+                tvt.RandomHorizontalFlip(),
+                tvt.ToTensor(),
+                tvt.Normalize(mean, std),
+            ]
+        ),
+    )
+elif args.outlier_name == "300k":
+    outlier_data = RandomImages(
+        transform=tvt.Compose(
+            [
+                tvt.ToTensor(),
+                tvt.ToPILImage(),
+                tvt.RandomCrop(32, padding=4),
+                tvt.RandomHorizontalFlip(),
+                tvt.ToTensor(),
+                tvt.Normalize(mean, std),
+            ]
+        )
+    )
+elif args.outlier_name == "tinyimagenet":
+    outlier_data = dset.ImageFolder(
+        root="DOE/data/tiny-imagenet-200/train",
+        transform=tvt.Compose(
+            [
+                tvt.Resize(32),
+                tvt.RandomCrop(32, padding=4),
+                tvt.RandomHorizontalFlip(),
+                tvt.ToTensor(),
+                tvt.Normalize(mean, std),
+            ]
+        ),
+    )
 train_loader_out = DataLoader(
     outlier_data,
     batch_size=128,
@@ -534,8 +594,8 @@ for margin in margins:
             except Exception as e:
                 logging.error(e)
             df.to_csv(
-                "logs/pytorch_ood/fine_tuning_results_six_bencmark_test_datasets/v6/{}_{}_margin_{}_trial_{}.csv".format(
-                    args.dataset, args.detectors, margin, i
+                "results/{}/{}/{}_margin_{}_trial_{}.csv".format(
+                    args.outlier_name, args.dataset, args.detectors, margin, i
                 )
             )
 
