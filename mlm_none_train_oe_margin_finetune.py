@@ -69,7 +69,7 @@ parser.add_argument(
     "--outlier_name",
     "-on",
     type=str,
-    default="tinyimagenet",
+    default="300k",
     choices=["300k", "imgnet32", "tinyimagenet"],
     help="Choose the outlier data",
 )
@@ -127,7 +127,7 @@ ood_datasets = [
     "svhn",
     "isun",
     LSUNCrop,
-    "places_365",
+    Places365,
 ]
 datasets = {}
 for ood_dataset in ood_datasets:
@@ -316,6 +316,7 @@ def test():
     loss = 0
     correct = 0
     total = 0
+    test_accuracies = []
     criterion = nn.CrossEntropyLoss()
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(val_loader):
@@ -330,12 +331,14 @@ def test():
             correct += predicted.eq(targets).sum().item()
 
             test_acc = predicted.eq(targets).sum().item() / targets.size(0)
+            test_accuracies.append(test_acc)
             progress_bar(
                 batch_idx,
                 len(val_loader),
                 "Loss: %.3f | Acc: %.3f%% (%d/%d)"
                 % (loss, test_acc * 100, correct, total),
             )
+    return test_accuracies
 
 
 def save_fig(name, img, dir_path, count):
@@ -365,6 +368,8 @@ def train():
     train_ood_features = []
     train_id_labels = []
     train_ood_labels = []
+
+    accuracies = []
 
     losses_val = []
     for batch_idx, (in_set, out_set) in enumerate(zip(train_loader, train_loader_out)):
@@ -463,6 +468,7 @@ def train():
         losses_val.append(losses)
 
         train_acc = predicted.eq(targets).sum().item() / targets.size(0)
+        accuracies.append(train_acc)
         train_loss = total_loss.item()
         progress_bar(
             batch_idx,
@@ -489,6 +495,8 @@ def train():
 
     if args.plot_tsne:
         return train_id_features, train_ood_features, train_id_labels, train_ood_labels
+    else:
+        return accuracies
 
 
 if args.dataset == "cifar10":
@@ -509,8 +517,8 @@ elif args.dataset == "cifar100":
 perm_train = torch.randperm(train_loader.__len__() + train_loader_out.__len__())
 select_train = perm_train[: args.num_plot_samples]
 dataset = args.dataset
-epochs = 2
-margins = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+epochs = 10
+margins = [0.3]
 for margin in margins:
     for epoch in range(epochs):
         if args.plot_tsne:
@@ -536,13 +544,20 @@ for margin in margins:
                 total_labels,
                 10,
                 epoch,
-                "train_oe_finetune_{}_samples/".format(args.num_plot_samples),
+                "MaPS_{}_{}_{}_samples/".format(
+                    args.dataset, args.detectors, args.num_plot_samples
+                ),
             )
         else:
-            train()
+            accuracies = train()
+
         print(losses_val)
 
-        test()
+        test_accuracies = test()
+        import json
+
+        with open("./results/{}_{}.txt".format(args.dataset, args.detectors), "w") as f:
+            json.dump(test_accuracies, f)
 
         do_eval = epoch == epochs - 1
         trial_results = []

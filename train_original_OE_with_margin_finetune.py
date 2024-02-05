@@ -221,10 +221,11 @@ if args.load != "":
         + calib_indicator
         + "_"
         + args.model
-        + "_pretrained_epoch_"
+        + "_baseline_epoch_"
         + "99"
         + ".pt",
     )
+    print(model_name)
     if os.path.isfile(model_name):
         net.load_state_dict(torch.load(model_name))
         print(f"Model restored! Epoch: 99, Model name: {model_name}")
@@ -342,6 +343,7 @@ def train():
         loss_avg = loss_avg * 0.8 + float(loss) * 0.2
 
     state["train_loss"] = loss_avg
+    return final_loss
 
 
 # test function
@@ -399,13 +401,15 @@ for margin in [0.3]:
     ) as f:
         f.write("epoch,time(s),train_loss,test_loss,test_error(%)\n")
     metrics = []
+    final_losses = []
     for epoch in range(0, args.epochs):
         state["epoch"] = epoch
         criterion = MarginLoss(weights=None, margin=margin)
 
         begin_epoch = time.time()
 
-        train()
+        final_loss = train()
+        final_losses.append(final_loss)
         test()
 
         # Save model
@@ -457,3 +461,4 @@ for margin in [0.3]:
                 100 - 100.0 * state["test_accuracy"],
             )
         )
+    print(final_losses)

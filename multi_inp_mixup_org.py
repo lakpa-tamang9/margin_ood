@@ -1,7 +1,7 @@
 import pandas as pd  # additional dependency, used here for convenience
 import torch
 from torch.utils.data import DataLoader
-from torchvision.datasets import CIFAR10
+from torchvision.datasets import CIFAR10, CIFAR100
 import numpy as np
 from pytorch_ood.dataset.img import *
 import torch.nn as nn
@@ -18,6 +18,7 @@ from torchvision.transforms.functional import to_pil_image
 import random
 import matplotlib.pyplot as plt
 from utils import *
+import torchvision.datasets as dset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mean = [x / 255 for x in [125.3, 123.0, 113.9]]
@@ -38,34 +39,56 @@ parser.add_argument(
 args = parser.parse_args()
 
 # Setup preprocessing
-trans = WideResNet.transform_for("cifar10-pt")
-norm_std = WideResNet.norm_std_for("cifar10-pt")
+trans = WideResNet.transform_for("cifar100-pt")
+norm_std = WideResNet.norm_std_for("cifar100-pt")
 
 # Setup datasets
 
-dataset_in_test = CIFAR10(root="data", train=False, transform=trans, download=True)
+dataset_in_test = CIFAR100(root="data", train=False, transform=trans, download=True)
 
+# create all OOD datasets
 # create all OOD datasets
 ood_datasets = [
     Textures,
-    TinyImageNetCrop,
-    TinyImageNetResize,
+    "svhn",
+    "isun",
     LSUNCrop,
-    LSUNResize,
     Places365,
 ]
 datasets = {}
 for ood_dataset in ood_datasets:
-    dataset_out_test = ood_dataset(
-        root="data", transform=trans, target_transform=ToUnknown(), download=True
-    )
+    if ood_dataset == "svhn":
+        dataset_out_test = dset.ImageFolder(
+            root="data/svhn",
+            transform=tvt.Compose(
+                [
+                    tvt.Resize(32),
+                    tvt.CenterCrop(32),
+                    tvt.ToTensor(),
+                    tvt.Normalize(mean, std),
+                ]
+            ),
+            target_transform=ToUnknown(),
+        )
+    elif ood_dataset == "isun":
+        dataset_out_test = dset.ImageFolder(
+            root="data/iSUN", transform=trans, target_transform=ToUnknown()
+        )
+    else:
+        dataset_out_test = ood_dataset(
+            root="data", transform=trans, target_transform=ToUnknown(), download=True
+        )
+
     test_loader = DataLoader(
         dataset_in_test + dataset_out_test, batch_size=256, num_workers=12
     )
-    datasets[ood_dataset.__name__] = test_loader
+    if ood_dataset in ["svhn", "isun", "places_365"]:
+        datasets[ood_dataset] = test_loader
+    else:
+        datasets[ood_dataset.__name__] = test_loader
 
 # **Stage 1**: Create DNN with pre-trained weights from the Hendrycks baseline paper
-model = WideResNet(num_classes=10, pretrained="cifar10-pt").eval().to(device)
+model = WideResNet(num_classes=100, pretrained="cifar100-pt").eval().to(device)
 
 # **Stage 2**: Create OOD detector
 detectors = {}
@@ -74,10 +97,10 @@ detectors = {}
 # detectors["Mahalanobis+ODIN"] = Mahalanobis(
 #     model.features, norm_std=norm_std, eps=0.002
 # )
-# detectors["Mahalanobis"] = Mahalanobis(model.features)
+detectors["Mahalanobis"] = Mahalanobis(model.features)
 # detectors["KLMatching"] = KLMatching(model)
 # detectors["SHE"] = SHE(model.features, model.fc)
-detectors["MSP"] = MaxSoftmax(model)
+# detectors["MSP"] = MaxSoftmax(model)
 # detectors["EnergyBased"] = EnergyBased(model)
 # detectors["MaxLogit"] = MaxLogit(model)
 # detectors["ODIN"] = ODIN(model, norm_std=norm_std, eps=0.002)
@@ -88,7 +111,7 @@ detectors["MSP"] = MaxSoftmax(model)
 
 # fit detectors to training data (some require this, some do not)
 loader_in_train = DataLoader(
-    CIFAR10(root="data", train=True, transform=trans), batch_size=256, num_workers=12
+    CIFAR100(root="data", train=True, transform=trans), batch_size=256, num_workers=12
 )
 for name, detector in detectors.items():
     print(f"--> Fitting {name}")
@@ -231,7 +254,9 @@ def train():
                 plt.savefig(f"{dir_path}/mim_img_{i}.png")
 
         batch_size = inputs.size(0)
-        uniform_labels = torch.ones((batch_size, 10), dtype=torch.int64).to(device) / 10
+        uniform_labels = (
+            torch.ones((batch_size, 100), dtype=torch.int64).to(device) / 100
+        )
         uniform_loss = criterion(mixed_outputs, uniform_labels).to(device)
 
         total_loss = loss + uniform_loss
@@ -248,12 +273,13 @@ def train():
             % (losses, train_acc * 100, correct, total),
         )
 
-train_data = CIFAR10(root="data", train=True, download=True, transform=trans)
+
+train_data = CIFAR100(root="data", train=True, download=True, transform=trans)
 train_loader = DataLoader(train_data, batch_size=128, num_workers=12)
 
-train_data_mix = CIFAR10(root="data", train=True, download=True, transform=new_trans)
+train_data_mix = CIFAR100(root="data", train=True, download=True, transform=new_trans)
 
-test_data = CIFAR10(root="data", train=False, download=True, transform=trans)
+test_data = CIFAR100(root="data", train=False, download=True, transform=trans)
 test_loader = DataLoader(test_data, batch_size=128, num_workers=12)
 
 
@@ -281,4 +307,4 @@ df.loc[len(df.index)] = [
     mean_aupr_out.values[0],
     mean_fpr95.values[0],
 ]
-df.to_csv("logs/pytorch_ood/fine_tuning_results/{}.csv".format(args.exp_name))
+df.to_csv("logs/pytorch_ood/mim_org/{}.csv".format(args.exp_name))

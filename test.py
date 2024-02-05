@@ -124,8 +124,8 @@ def get_scores(loader, calc_id_acc=False, in_dist=False):
     net.eval()
     with torch.no_grad():
         for batch_idx, (data, targets) in enumerate(loader):
-            if batch_idx >= ood_num_examples // test_bs and in_dist is False:
-                break
+            # if batch_idx >= ood_num_examples // test_bs and in_dist is False:
+            #     break
             data, targets = data.to(device), targets.to(device)
             _, output = net(data)
 
@@ -145,7 +145,7 @@ def get_scores(loader, calc_id_acc=False, in_dist=False):
     ood_score = concat(_score)
 
     if calc_id_acc:
-        return ood_score[:ood_num_examples].copy(), mean_acc
+        return ood_score[:ood_num_examples].copy(), mean_acc, acc
     else:
         return ood_score[:ood_num_examples].copy()
 
@@ -192,18 +192,25 @@ ood_loaders = {
     "textures": texture_loader,
     "places_365": places365_loader,
 }
-for run in range(5):
+for run in range(1):
     metrics = []
     for i in range(5, 6):
         margin = i / 10
-        model_path = "checkpoint/{}/{}_{}_{}_ckpt9.pt".format(
-            model, dataset, args.exp_name, margin
-        )
+        # model_path = "checkpoint/{}/{}_{}_{}_ckpt9.pt".format(
+        #     model, dataset, args.exp_name, margin
+        # )
+        model_path = "/home/s223127906/deakin_devs/margin_ood/checkpoint/wrn/cifar100_loss_print_OE_0.5_ckpt9.pt"
         net.load_state_dict(torch.load(model_path))
         net.to(device)
         net.eval()
-        in_score, accuracy = get_scores(test_loader, calc_id_acc=True, in_dist=True)
-        print(accuracy)
+        in_score, accuracy, test_accuracies = get_scores(
+            test_loader, calc_id_acc=True, in_dist=True
+        )
+        print(f"The accuracy is: {accuracy}")
+        import json
+
+        with open("./results/test_accuracies_oe.txt", "w") as f:
+            json.dump(test_accuracies, f)
         # id_accuracy = get_id_acc(cifar_loader)
         # print(f"The id accuracy is {id_accuracy} %")
         for ood_name, ood_loader in ood_loaders.items():

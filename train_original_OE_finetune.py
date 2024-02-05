@@ -49,7 +49,7 @@ parser.add_argument(
 parser.add_argument(
     "--calibration",
     "-c",
-    default=True,
+    default=False,
     help="Train a model to be used for calibration. This holds out some data for validation.",
 )
 # Optimization options
@@ -269,7 +269,6 @@ def MixUp(inputs, mix_size):
 def train():
     net.train()  # enter train mode
     loss_avg = 0.0
-
     # start at a random point of the outlier dataset; this induces more randomness without obliterating locality
     train_loader_out.dataset.offset = np.random.randint(len(train_loader_out.dataset))
     for batch_idx, (in_set, out_set) in enumerate(
@@ -277,9 +276,9 @@ def train():
     ):
         inset_tensor = in_set[0].to(device)
         out_set_tensor = out_set[0].to(device)
-        mixed_inputs = OE_mixup(inset_tensor, out_set_tensor)
+        # mixed_inputs = OE_mixup(inset_tensor, out_set_tensor)
 
-        data = torch.cat((inset_tensor, mixed_inputs), 0)
+        data = torch.cat((inset_tensor, out_set_tensor), 0)
         targets = in_set[1].to(device)
 
         # Forward prop inputs
@@ -289,15 +288,16 @@ def train():
 
         loss = F.cross_entropy(outputs[: len(inset_tensor)], targets)
 
-        loss += (
-            0.5
-            * -(
-                outputs[len(in_set[0]) :].mean(1)
-                - torch.logsumexp(outputs[len(in_set[0]) :], dim=1)
-            ).mean()
-        )
+        # loss += (
+        #     0.5
+        #     * -(
+        #         outputs[len(in_set[0]) :].mean(1)
+        #         - torch.logsumexp(outputs[len(in_set[0]) :], dim=1)
+        #     ).mean()
+        # )
 
         loss.backward()
+        train_losses.append(loss)
         optimizer.step()
 
         scheduler.step()
@@ -305,6 +305,7 @@ def train():
         loss_avg = loss_avg * 0.8 + float(loss) * 0.2
 
     state["train_loss"] = loss_avg
+    return loss
 
 
 # test function
@@ -352,6 +353,7 @@ for dir in [logs_dir, checkpoint_dir]:
 print("Beginning Training\n")
 
 # Main loop
+train_losses = []
 for margin in [0.5]:
     with open(
         os.path.join(
@@ -368,7 +370,8 @@ for margin in [0.5]:
 
         begin_epoch = time.time()
 
-        train()
+        train_loss = train()
+        train_losses.append(train_loss)
         test()
 
         # Save model
@@ -420,3 +423,4 @@ for margin in [0.5]:
                 100 - 100.0 * state["test_accuracy"],
             )
         )
+    print(train_losses)
