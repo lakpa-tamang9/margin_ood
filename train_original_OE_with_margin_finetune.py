@@ -127,10 +127,30 @@ if args.dataset == "cifar10":
     train_data_in = dset.CIFAR10("./data", train=True, transform=train_transform)
     test_data = dset.CIFAR10("./data", train=False, transform=test_transform)
     num_classes = 10
-else:
+elif args.dataset == "cifar100":
     train_data_in = dset.CIFAR100("./data", train=True, transform=train_transform)
     test_data = dset.CIFAR100("./data", train=False, transform=test_transform)
     num_classes = 100
+elif args.dataset == "tinyimagenet":
+    train_transform = trn.Compose(
+        [
+            trn.RandomHorizontalFlip(),
+            trn.RandomCrop(64, padding=8),
+            trn.ToTensor(),
+            trn.Normalize(mean, std),
+        ]
+    )
+    test_transform = trn.Compose([trn.ToTensor(), trn.Normalize(mean, std)])
+    train_data_in = dset.ImageFolder(
+        root="/home/s223127906/deakin_devs/margin_ood/DOE/data/tiny-imagenet-200/train",
+        transform=train_transform,
+    )
+    test_data = dset.ImageFolder(
+        root="/home/s223127906/deakin_devs/margin_ood/DOE/data/tiny-imagenet-200/val",
+        transform=test_transform,
+    )
+
+    num_classes = 200
 
 
 calib_indicator = ""
@@ -376,8 +396,8 @@ if args.test:
     exit()
 
 
-logs_dir = os.path.join("./logs", args.model)
-checkpoint_dir = os.path.join("./checkpoint", args.model)
+logs_dir = os.path.join("./logs_test_and_ckpts", args.model)
+checkpoint_dir = os.path.join("./logs_test_and_ckpts", args.model)
 
 # Create directories for logging metrics and saving trained model
 for dir in [logs_dir, checkpoint_dir]:
@@ -391,7 +411,8 @@ for dir in [logs_dir, checkpoint_dir]:
 print("Beginning Training\n")
 
 # Main loop
-for margin in [0.3]:
+# for margin in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.8, 1.0]:
+for margin in [0.9]:
     with open(
         os.path.join(
             logs_dir,
