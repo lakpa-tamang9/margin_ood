@@ -28,6 +28,9 @@ parser.add_argument(
 parser.add_argument(
     "--dataset", "-d", type=str, default="cifar10", choices=["cifar10", "cifar100"]
 )
+parser.add_argument(
+    "--temp", type=int, default=100, help="Temperature value to scale the output."
+)
 args = parser.parse_args()
 
 test_bs = 200
@@ -142,7 +145,6 @@ def get_scores(loader, calc_id_acc=False, detector="msp", in_dist=False):
     acc = []
     correct = 0
     total = 0
-    temp = 1000
     net.eval()
     with torch.no_grad():
         for batch_idx, (data, targets) in enumerate(loader):
@@ -161,7 +163,7 @@ def get_scores(loader, calc_id_acc=False, detector="msp", in_dist=False):
 
             # smax = to_np(F.softmax(output, dim=1))
             if detector == "msp":
-                output = output / temp
+                output = output / args.temp
                 smax = to_np(output)
                 max_val = -np.max(smax, axis=1)
                 _score.append(max_val)
@@ -177,7 +179,9 @@ def get_scores(loader, calc_id_acc=False, detector="msp", in_dist=False):
                 _score.append(ood_scores)
 
             elif detector == "energy":
-                _score.append(to_np((temp * torch.logsumexp(output / temp, dim=1))))
+                _score.append(
+                    to_np((args.temp * torch.logsumexp(output / args.temp, dim=1)))
+                )
 
     if calc_id_acc:
         mean_acc = np.mean(acc)
@@ -237,9 +241,8 @@ ood_loaders = {
     "isun": isun_loader,
     "places_365": places365_loader,
 }
-trial_results = []
 accuracies = []
-output_metrics_dir = os.path.join("./logs", "oe_finetune_temp1000")
+output_metrics_dir = os.path.join("./FINAL_RESULTS", "MaPS_temp_{}".format(args.temp))
 if not os.path.exists(output_metrics_dir):
     os.makedirs(output_metrics_dir)
 
@@ -254,6 +257,8 @@ for i in range(10):
     ) as f:
         csvwriter = csv.writer(f)
         csvwriter.writerow(["run", "margin", "ood_dataset", "auroc", "aupr", "fpr"])
+
+    trial_results = []
     for run in range(5):
         print(f"Evaluating for trial {run+1}")
         metrics = []
@@ -297,7 +302,7 @@ for i in range(10):
         mean_aupr = np.mean(auprs)
         mean_fpr = np.mean(fprs)
         mean_result = [
-            f"mean_run_{run}",
+            f"mean_run_{run+1}",
             margin,
             "all_avg",
             round((mean_auroc * 100), 2),
