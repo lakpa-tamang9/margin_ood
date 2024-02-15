@@ -10,6 +10,8 @@ from models.wrn import WideResNet
 from models.resnet import ResNet18
 from utils import *
 import csv
+from dataset_utils.svhn_loader import SVHN
+from pytorch_ood.detector import Mahalanobis
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -21,7 +23,7 @@ parser.add_argument(
     "--exp_name",
     "-en",
     type=str,
-    required=True,
+    default="test",
 )
 parser.add_argument(
     "--dataset", "-d", type=str, default="cifar10", choices=["cifar10", "cifar100"]
@@ -54,14 +56,23 @@ texture_data = dset.ImageFolder(
         [trn.Resize(32), trn.CenterCrop(32), trn.ToTensor(), trn.Normalize(mean, std)]
     ),
 )
-svhn_data = dset.ImageFolder(
+# svhn_data = dset.ImageFolder(
+#     root="data/svhn",
+#     transform=trn.Compose(
+#         [trn.Resize(32), trn.CenterCrop(32), trn.ToTensor(), trn.Normalize(mean, std)]
+#     ),
+# )
+svhn_data = SVHN(
     root="data/svhn",
+    split="test",
     transform=trn.Compose(
         [trn.Resize(32), trn.CenterCrop(32), trn.ToTensor(), trn.Normalize(mean, std)]
     ),
+    download=False,
 )
+
 places365_data = dset.ImageFolder(
-    root="data/places365_standard",
+    root="data/places365",
     transform=trn.Compose(
         [trn.Resize(32), trn.CenterCrop(32), trn.ToTensor(), trn.Normalize(mean, std)]
     ),
@@ -80,34 +91,28 @@ isun_data = dset.ImageFolder(
 )
 
 # Data Loaders
-test_loader = torch.utils.data.DataLoader(
-    test_data,
-    batch_size=test_bs,
-    shuffle=False,
-    num_workers=4,
-    pin_memory=True,
-)
 
 texture_loader = torch.utils.data.DataLoader(
-    texture_data, batch_size=test_bs, shuffle=True, pin_memory=False
+    texture_data, batch_size=test_bs, num_workers=12, shuffle=True, pin_memory=False
 )
 svhn_loader = torch.utils.data.DataLoader(
-    svhn_data, batch_size=test_bs, shuffle=True, pin_memory=False
+    svhn_data, batch_size=test_bs, num_workers=12, shuffle=True, pin_memory=False
 )
 places365_loader = torch.utils.data.DataLoader(
     places365_data,
     batch_size=test_bs,
+    num_workers=12,
     shuffle=True,
     pin_memory=False,
 )
 lsunc_loader = torch.utils.data.DataLoader(
-    lsunc_data, batch_size=test_bs, shuffle=True, pin_memory=False
+    lsunc_data, batch_size=test_bs, num_workers=12, shuffle=True, pin_memory=False
 )
-lsunr_loader = torch.utils.data.DataLoader(
-    lsunr_data, batch_size=test_bs, shuffle=True, pin_memory=False
-)
+# lsunr_loader = torch.utils.data.DataLoader(
+#     lsunr_data, batch_size=test_bs, shuffle=True, pin_memory=False
+# )
 isun_loader = torch.utils.data.DataLoader(
-    isun_data, batch_size=test_bs, shuffle=True, pin_memory=False
+    isun_data, batch_size=test_bs, num_workers=12, shuffle=True, pin_memory=False
 )
 
 ood_num_examples = len(test_data) // 5
@@ -115,19 +120,37 @@ print(f"ood num examples is {ood_num_examples}")
 concat = lambda x: np.concatenate(x, axis=0)
 to_np = lambda x: x.data.cpu().numpy()
 
+from scipy.linalg import inv
 
-def get_scores(loader, calc_id_acc=False, in_dist=False):
+
+def compute_mean_and_cov(feature_vectors):
+    mean_vector = np.mean(feature_vectors, axis=0)
+    cov_matrix = np.cov(feature_vectors, rowvar=False)
+    return mean_vector, cov_matrix
+
+
+def mahalanobis_distance(x, mean_vector, cov_matrix):
+    x_minus_mu = x - mean_vector
+    inv_covmat = inv(cov_matrix)
+    left_term = np.dot(x_minus_mu, inv_covmat)
+    mahal = np.dot(left_term, x_minus_mu.T)
+    return np.array(np.sqrt(mahal))
+
+
+def get_scores(loader, calc_id_acc=False, detector="msp", in_dist=False):
     _score = []
     acc = []
     correct = 0
     total = 0
+    temp = 1000
     net.eval()
     with torch.no_grad():
         for batch_idx, (data, targets) in enumerate(loader):
-            # if batch_idx >= ood_num_examples // test_bs and in_dist is False:
-            #     break
+            if batch_idx >= ood_num_examples // test_bs and in_dist is False:
+                break
             data, targets = data.to(device), targets.to(device)
-            _, output = net(data)
+            feat, output = net(data)
+            # print(feat.shape)
 
             if calc_id_acc:
                 # Calculate accuracy
@@ -136,10 +159,26 @@ def get_scores(loader, calc_id_acc=False, in_dist=False):
                 correct += predicted.eq(targets).sum().item()
                 acc.append(100.0 * correct / total)
 
-            smax = to_np(F.softmax(output, dim=1))
-            # smax = to_np(output)
-            max_val = -np.max(smax, axis=1)
-            _score.append(max_val)
+            # smax = to_np(F.softmax(output, dim=1))
+            if detector == "msp":
+                output = output / temp
+                smax = to_np(output)
+                max_val = -np.max(smax, axis=1)
+                _score.append(max_val)
+
+            elif detector == "maha":
+                feats_np = feat.cpu().numpy()
+                # print(feats_np.shape)
+                mean_vector, cov_matrix = compute_mean_and_cov(feats_np)
+                ood_scores = []
+                for feat_np in feats_np:
+                    score = mahalanobis_distance(feat_np, mean_vector, cov_matrix)
+                    ood_scores.append(score)
+                _score.append(ood_scores)
+
+            elif detector == "energy":
+                _score.append(to_np((temp * torch.logsumexp(output / temp, dim=1))))
+
     if calc_id_acc:
         mean_acc = np.mean(acc)
     ood_score = concat(_score)
@@ -148,6 +187,13 @@ def get_scores(loader, calc_id_acc=False, in_dist=False):
         return ood_score[:ood_num_examples].copy(), mean_acc, acc
     else:
         return ood_score[:ood_num_examples].copy()
+
+
+def maha_score(loader):
+    with torch.no_grad():
+        for batch_idx, (data, targets) in enumerate(loader):
+            data, targets = data.to(device), targets.to(device)
+            Mahalanobis(data)
 
 
 def calc_accuracy(X, true_labels):
@@ -186,43 +232,19 @@ net.to(device)
 # OOD loaders for test ood datasets
 ood_loaders = {
     "lsunc": lsunc_loader,
-    "lsunr": lsunr_loader,
+    "textures": texture_loader,
     "svhn": svhn_loader,
     "isun": isun_loader,
-    "textures": texture_loader,
     "places_365": places365_loader,
 }
-for run in range(1):
-    metrics = []
-    for i in range(5, 6):
-        margin = i / 10
-        # model_path = "checkpoint/{}/{}_{}_{}_ckpt9.pt".format(
-        #     model, dataset, args.exp_name, margin
-        # )
-        model_path = "/home/s223127906/deakin_devs/margin_ood/checkpoint/wrn/cifar100_loss_print_OE_0.5_ckpt9.pt"
-        net.load_state_dict(torch.load(model_path))
-        net.to(device)
-        net.eval()
-        in_score, accuracy, test_accuracies = get_scores(
-            test_loader, calc_id_acc=True, in_dist=True
-        )
-        print(f"The accuracy is: {accuracy}")
-        import json
+trial_results = []
+accuracies = []
+output_metrics_dir = os.path.join("./logs", "oe_finetune_temp1000")
+if not os.path.exists(output_metrics_dir):
+    os.makedirs(output_metrics_dir)
 
-        with open("./results/test_accuracies_oe.txt", "w") as f:
-            json.dump(test_accuracies, f)
-        # id_accuracy = get_id_acc(cifar_loader)
-        # print(f"The id accuracy is {id_accuracy} %")
-        for ood_name, ood_loader in ood_loaders.items():
-            auroc, aupr, fpr = get_results(ood_loader, in_score)
-            print(
-                f"Margin {margin} with {ood_name} ood, metrics : {[auroc, aupr, fpr]}"
-            )
-            metrics.append([run, margin, ood_name, auroc, aupr, fpr])
-
-    output_metrics_dir = os.path.join("./logs", "output_metrics")
-    if not os.path.exists(output_metrics_dir):
-        os.makedirs(output_metrics_dir)
+for i in range(10):
+    margin = i / 10
 
     with open(
         "{}/{}_{}_{}_margin_{}.csv".format(
@@ -232,4 +254,79 @@ for run in range(1):
     ) as f:
         csvwriter = csv.writer(f)
         csvwriter.writerow(["run", "margin", "ood_dataset", "auroc", "aupr", "fpr"])
-        csvwriter.writerows(metrics)
+    for run in range(5):
+        print(f"Evaluating for trial {run+1}")
+        metrics = []
+        test_loader = torch.utils.data.DataLoader(
+            test_data,
+            batch_size=test_bs,
+            shuffle=True,
+            num_workers=12,
+            pin_memory=True,
+        )
+        model_path = "logs_test_and_ckpts/{}/{}_{}_{}_ckpt9.pt".format(
+            model, dataset, args.exp_name, margin
+        )
+        net.load_state_dict(torch.load(model_path))
+        net.to(device)
+        net.eval()
+        in_score, accuracy, test_accuracies = get_scores(
+            test_loader, calc_id_acc=True, in_dist=True
+        )
+        print(f"The accuracy is: {round(accuracy, 2)} %")
+        accuracies.append(accuracy)
+        aurocs = []
+        auprs = []
+        fprs = []
+        for ood_name, ood_loader in ood_loaders.items():
+            auroc, aupr, fpr = get_results(ood_loader, in_score)
+            aurocs.append(auroc)
+            auprs.append(aupr)
+            fprs.append(fpr)
+            metrics.append(
+                [
+                    run + 1,
+                    margin,
+                    ood_name,
+                    round((auroc * 100), 4),
+                    round((aupr * 100), 4),
+                    round((fpr * 100), 4),
+                ]
+            )
+        mean_auroc = np.mean(aurocs)
+        mean_aupr = np.mean(auprs)
+        mean_fpr = np.mean(fprs)
+        mean_result = [
+            f"mean_run_{run}",
+            margin,
+            "all_avg",
+            round((mean_auroc * 100), 2),
+            round((mean_aupr * 100), 2),
+            round((mean_fpr * 100), 2),
+        ]
+        metrics += [mean_result]
+
+        with open(
+            "{}/{}_{}_{}_margin_{}.csv".format(
+                output_metrics_dir, model, dataset, args.exp_name, margin
+            ),
+            "a",
+        ) as f:
+            csvwriter = csv.writer(f)
+            csvwriter.writerows(metrics)
+
+        trial_results.append([mean_auroc, mean_aupr, mean_fpr])
+
+    avg_trial_result = [round((sum(x) / len(x)) * 100, 2) for x in zip(*trial_results)]
+    details = ["Avg", margin, ood_name]
+
+    print(f"Mean accuracy is {round(np.mean(accuracies), 2)}%")
+    final_result = details + avg_trial_result
+    with open(
+        "{}/{}_{}_{}_margin_{}.csv".format(
+            output_metrics_dir, model, dataset, args.exp_name, margin
+        ),
+        "a",
+    ) as f:
+        csvwriter = csv.writer(f)
+        csvwriter.writerows([final_result])
