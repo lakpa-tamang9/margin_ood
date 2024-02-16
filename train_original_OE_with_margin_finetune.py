@@ -14,7 +14,7 @@ from loss.loss import MarginLoss
 from dataset_utils.validation_dataset import validation_split
 from dataset_utils.randimages import RandomImages
 from models.resnet import ResNet18
-
+from utils import *
 from models.wrn import WideResNet
 from dataset_utils.resized_imagenet_loader import ImageNetDownSample
 
@@ -61,7 +61,7 @@ parser.add_argument(
 )
 # Optimization options
 parser.add_argument(
-    "--epochs", "-e", type=int, default=10, help="Number of epochs to train."
+    "--epochs", "-e", type=int, default=100, help="Number of epochs to train."
 )
 parser.add_argument(
     "--learning_rate",
@@ -93,7 +93,8 @@ parser.add_argument(
     "--load",
     "-l",
     type=str,
-    default="./snapshots/baseline",
+    # default="./snapshots/baseline",
+    default="",
     help="Checkpoint path to resume / test.",
 )
 parser.add_argument("--exp_name", "-en", default="test", type=str)
@@ -326,8 +327,6 @@ def train():
             inset_tensor = inset_tensor[:length]
             out_set_tensor = out_set_tensor[:length]
 
-        # mixed_inputs = OE_mixup(inset_tensor, out_set_tensor)
-
         data = torch.cat((inset_tensor, out_set_tensor), 0)
         targets = in_set[1].to(device)
 
@@ -363,7 +362,6 @@ def train():
         loss_avg = loss_avg * 0.8 + float(loss) * 0.2
 
     state["train_loss"] = loss_avg
-    return final_loss
 
 
 # test function
@@ -411,8 +409,7 @@ for dir in [logs_dir, checkpoint_dir]:
 print("Beginning Training\n")
 
 # Main loop
-# for margin in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.8, 1.0]:
-for margin in [0.9]:
+for margin in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.8, 1.0]:
     with open(
         os.path.join(
             logs_dir,
@@ -422,15 +419,13 @@ for margin in [0.9]:
     ) as f:
         f.write("epoch,time(s),train_loss,test_loss,test_error(%)\n")
     metrics = []
-    final_losses = []
     for epoch in range(0, args.epochs):
         state["epoch"] = epoch
         criterion = MarginLoss(weights=None, margin=margin)
 
         begin_epoch = time.time()
 
-        final_loss = train()
-        final_losses.append(final_loss)
+        train()
         test()
 
         # Save model
@@ -482,4 +477,3 @@ for margin in [0.9]:
                 100 - 100.0 * state["test_accuracy"],
             )
         )
-    print(final_losses)
