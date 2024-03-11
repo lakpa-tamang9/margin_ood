@@ -242,11 +242,13 @@ ood_loaders = {
     "places_365": places365_loader,
 }
 accuracies = []
-output_metrics_dir = os.path.join("./FINAL_RESULTS", "MaPS_temp_{}".format(args.temp))
+output_metrics_dir = os.path.join(
+    "./FINAL_RESULTS_imgnet32/wo_margin", "MaPS_temp_{}".format(args.temp)
+)
 if not os.path.exists(output_metrics_dir):
     os.makedirs(output_metrics_dir)
 
-for i in range(10):
+for i in range(5, 6):
     margin = i / 10
 
     with open(
@@ -269,8 +271,10 @@ for i in range(10):
             num_workers=12,
             pin_memory=True,
         )
-        model_path = "logs_test_and_ckpts/{}/{}_{}_{}_ckpt9.pt".format(
-            model, dataset, args.exp_name, margin
+        model_path = (
+            "logs_test_and_ckpts_imgnet32/wo_margin/{}/{}_{}_{}_ckpt9.pt".format(
+                model, dataset, args.exp_name, margin
+            )
         )
         net.load_state_dict(torch.load(model_path))
         net.to(device)
@@ -323,7 +327,7 @@ for i in range(10):
         trial_results.append([mean_auroc, mean_aupr, mean_fpr])
 
     avg_trial_result = [round((sum(x) / len(x)) * 100, 2) for x in zip(*trial_results)]
-    details = ["Avg", margin, ood_name]
+    details = ["Trial", "avg.", "****"]
 
     print(f"Mean accuracy is {round(np.mean(accuracies), 2)}%")
     final_result = details + avg_trial_result
