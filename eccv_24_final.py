@@ -280,6 +280,11 @@ scheduler = torch.optim.lr_scheduler.LambdaLR(
 )
 
 
+def calculate_differences(array_A, array_B):
+    differences = array_A[:, None] - array_B
+    return differences
+
+
 def train():
     net.train()  # enter train mode
     loss_avg = 0.0
@@ -318,11 +323,16 @@ def train():
             ).mean()
         )
 
-        loss_pre = torch.pow(F.relu(max_id - max_ood), 2).mean()
-        margin_loss = torch.clamp(margin - loss_pre, min=0.0)
+        mcd = calculate_differences(max_id, max_ood)
+        diffs = mcd.view(-1).tolist()
 
-        final_loss = loss + margin_loss
-        final_loss.backward()
+        print(len(diffs))
+        print(np.mean(diffs))
+
+        loss_pre = torch.pow(F.relu(mcd), 2).mean()
+        loss += -0.5 * torch.clamp(margin - loss_pre, min=0.0)
+
+        loss.backward()
 
         optimizer.step()
 
@@ -364,11 +374,11 @@ if args.test:
 
 
 logs_dir = os.path.join(
-    "./logs_test_and_ckpts_{}/wo_margin".format(args.outlier_name),
+    "./logs_test_and_ckpts_{}/ecml/motivation_plot_oe".format(args.outlier_name),
     args.model,
 )
 checkpoint_dir = os.path.join(
-    "./logs_test_and_ckpts_{}/wo_margin".format(args.outlier_name),
+    "./logs_test_and_ckpts_{}/ecml/motivation_plot_oe".format(args.outlier_name),
     args.model,
 )
 
@@ -386,7 +396,6 @@ print("Beginning Training\n")
 # Main loop
 # for margin in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.8, 0.9, 1.0]:
 for margin in [0.5]:
-    # for c10 best is 0.1, and for c100 best is 0.3
     with open(
         os.path.join(
             logs_dir,
@@ -398,8 +407,6 @@ for margin in [0.5]:
     metrics = []
     for epoch in range(0, args.epochs):
         state["epoch"] = epoch
-        criterion = MarginLoss(weights=None, margin=margin)
-
         begin_epoch = time.time()
 
         train()
