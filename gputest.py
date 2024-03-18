@@ -149,71 +149,43 @@ elif args.dataset == "tinyimagenet":
     num_classes = 200
 
 
-if args.outlier_name == "imgnet32":
-    ood_data = ImageNetDownSample(
-        root="./data/ImageNet32",
-        transform=trn.Compose(
-            [
-                trn.ToTensor(),
-                trn.ToPILImage(),
-                trn.RandomCrop(32, padding=4),
-                trn.RandomHorizontalFlip(),
-                trn.ToTensor(),
-                trn.Normalize(mean, std),
-            ]
-        ),
-    )
-elif args.outlier_name == "300k":
-    ood_data = RandomImages(
-        transform=trn.Compose(
-            [
-                trn.ToTensor(),
-                trn.ToPILImage(),
-                trn.RandomCrop(32, padding=4),
-                trn.RandomHorizontalFlip(),
-                trn.ToTensor(),
-                trn.Normalize(mean, std),
-            ]
-        ),
-        data_num=args.data_num,
-    )
-elif args.outlier_name == "tinyimagenet":
-    ood_data = dset.ImageFolder(
-        root="DOE/data/tiny-imagenet-200/train",
-        transform=trn.Compose(
-            [
-                trn.Resize(32),
-                trn.RandomCrop(32, padding=4),
-                trn.RandomHorizontalFlip(),
-                trn.ToTensor(),
-                trn.Normalize(mean, std),
-            ]
-        ),
-    )
+ood_data = RandomImages(
+    transform=trn.Compose(
+        [
+            trn.ToTensor(),
+            trn.ToPILImage(),
+            trn.RandomCrop(32, padding=4),
+            trn.RandomHorizontalFlip(),
+            trn.ToTensor(),
+            trn.Normalize(mean, std),
+        ]
+    ),
+    data_num=args.data_num,
+)
 
-# train_loader_in = torch.utils.data.DataLoader(
-#     train_data_in,
-#     batch_size=args.batch_size,
-#     shuffle=True,
-#     num_workers=args.prefetch,
-#     pin_memory=True,
-# )
+train_loader_in = torch.utils.data.DataLoader(
+    train_data_in,
+    batch_size=args.batch_size,
+    shuffle=True,
+    num_workers=12,
+    pin_memory=True,
+)
 
-# train_loader_out = torch.utils.data.DataLoader(
-#     ood_data,
-#     batch_size=args.batch_size,
-#     shuffle=False,
-#     num_workers=args.prefetch,
-#     pin_memory=True,
-# )
+train_loader_out = torch.utils.data.DataLoader(
+    ood_data,
+    batch_size=args.batch_size,
+    shuffle=False,
+    num_workers=12,
+    pin_memory=True,
+)
 
-# test_loader = torch.utils.data.DataLoader(
-#     test_data,
-#     batch_size=args.batch_size,
-#     shuffle=False,
-#     num_workers=args.prefetch,
-#     pin_memory=True,
-# )
+test_loader = torch.utils.data.DataLoader(
+    test_data,
+    batch_size=args.batch_size,
+    shuffle=False,
+    num_workers=12,
+    pin_memory=True,
+)
 
 # # Create model
 # if args.model == "resnet":
