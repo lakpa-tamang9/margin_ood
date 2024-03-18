@@ -1,7 +1,7 @@
 #!/bin/bash
  
 #SBATCH --job-name=macs_ood #Job name
-#SBATCH --partition=dgx
+#SBATCH --partition=hpc-dgx-b-1
 #SBATCH --gres=gpu:2           #Assign GPUs
 #SBATCH --time=24:00:00        #Time Limit
 #SBATCH --mem=40536
