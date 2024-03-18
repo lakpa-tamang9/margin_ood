@@ -149,112 +149,112 @@ elif args.dataset == "tinyimagenet":
     num_classes = 200
 
 
-calib_indicator = ""
-if args.calibration:
-    train_data_in, val_data = validation_split(train_data_in, val_share=0.1)
-    calib_indicator = "_calib"
+# calib_indicator = ""
+# if args.calibration:
+#     train_data_in, val_data = validation_split(train_data_in, val_share=0.1)
+#     calib_indicator = "_calib"
 
-if args.outlier_name == "imgnet32":
-    ood_data = ImageNetDownSample(
-        root="./data/ImageNet32",
-        transform=trn.Compose(
-            [
-                trn.ToTensor(),
-                trn.ToPILImage(),
-                trn.RandomCrop(32, padding=4),
-                trn.RandomHorizontalFlip(),
-                trn.ToTensor(),
-                trn.Normalize(mean, std),
-            ]
-        ),
-    )
-elif args.outlier_name == "300k":
-    ood_data = RandomImages(
-        transform=trn.Compose(
-            [
-                trn.ToTensor(),
-                trn.ToPILImage(),
-                trn.RandomCrop(32, padding=4),
-                trn.RandomHorizontalFlip(),
-                trn.ToTensor(),
-                trn.Normalize(mean, std),
-            ]
-        ),
-        data_num=args.data_num,
-    )
-elif args.outlier_name == "tinyimagenet":
-    ood_data = dset.ImageFolder(
-        root="DOE/data/tiny-imagenet-200/train",
-        transform=trn.Compose(
-            [
-                trn.Resize(32),
-                trn.RandomCrop(32, padding=4),
-                trn.RandomHorizontalFlip(),
-                trn.ToTensor(),
-                trn.Normalize(mean, std),
-            ]
-        ),
-    )
+# if args.outlier_name == "imgnet32":
+#     ood_data = ImageNetDownSample(
+#         root="./data/ImageNet32",
+#         transform=trn.Compose(
+#             [
+#                 trn.ToTensor(),
+#                 trn.ToPILImage(),
+#                 trn.RandomCrop(32, padding=4),
+#                 trn.RandomHorizontalFlip(),
+#                 trn.ToTensor(),
+#                 trn.Normalize(mean, std),
+#             ]
+#         ),
+#     )
+# elif args.outlier_name == "300k":
+#     ood_data = RandomImages(
+#         transform=trn.Compose(
+#             [
+#                 trn.ToTensor(),
+#                 trn.ToPILImage(),
+#                 trn.RandomCrop(32, padding=4),
+#                 trn.RandomHorizontalFlip(),
+#                 trn.ToTensor(),
+#                 trn.Normalize(mean, std),
+#             ]
+#         ),
+#         data_num=args.data_num,
+#     )
+# elif args.outlier_name == "tinyimagenet":
+#     ood_data = dset.ImageFolder(
+#         root="DOE/data/tiny-imagenet-200/train",
+#         transform=trn.Compose(
+#             [
+#                 trn.Resize(32),
+#                 trn.RandomCrop(32, padding=4),
+#                 trn.RandomHorizontalFlip(),
+#                 trn.ToTensor(),
+#                 trn.Normalize(mean, std),
+#             ]
+#         ),
+#     )
 
-train_loader_in = torch.utils.data.DataLoader(
-    train_data_in,
-    batch_size=args.batch_size,
-    shuffle=True,
-    num_workers=args.prefetch,
-    pin_memory=True,
-)
+# train_loader_in = torch.utils.data.DataLoader(
+#     train_data_in,
+#     batch_size=args.batch_size,
+#     shuffle=True,
+#     num_workers=args.prefetch,
+#     pin_memory=True,
+# )
 
-train_loader_out = torch.utils.data.DataLoader(
-    ood_data,
-    batch_size=args.batch_size,
-    shuffle=False,
-    num_workers=args.prefetch,
-    pin_memory=True,
-)
+# train_loader_out = torch.utils.data.DataLoader(
+#     ood_data,
+#     batch_size=args.batch_size,
+#     shuffle=False,
+#     num_workers=args.prefetch,
+#     pin_memory=True,
+# )
 
-test_loader = torch.utils.data.DataLoader(
-    test_data,
-    batch_size=args.batch_size,
-    shuffle=False,
-    num_workers=args.prefetch,
-    pin_memory=True,
-)
+# test_loader = torch.utils.data.DataLoader(
+#     test_data,
+#     batch_size=args.batch_size,
+#     shuffle=False,
+#     num_workers=args.prefetch,
+#     pin_memory=True,
+# )
 
-# Create model
-if args.model == "resnet":
-    net = ResNet18(num_classes=num_classes)
-else:
-    net = WideResNet(
-        args.layers, num_classes, args.widen_factor, dropRate=args.droprate
-    )
+# # Create model
+# if args.model == "resnet":
+#     net = ResNet18(num_classes=num_classes)
+# else:
+#     net = WideResNet(
+#         args.layers, num_classes, args.widen_factor, dropRate=args.droprate
+#     )
 
-# Restore model
-model_found = False
-if args.load != "":
-    model_name = os.path.join(
-        args.load,
-        args.dataset
-        + calib_indicator
-        + "_"
-        + args.model
-        + "_baseline_epoch_"
-        + "99"
-        + ".pt",
-    )
-    print(model_name)
-    if os.path.isfile(model_name):
-        net.load_state_dict(torch.load(model_name))
-        print(f"Model restored! Epoch: 99, Model name: {model_name}")
-        model_found = True
-    if not model_found:
-        assert False, "could not find model to restore"
+# # Restore model
+# model_found = False
+# if args.load != "":
+#     model_name = os.path.join(
+#         args.load,
+#         args.dataset
+#         + calib_indicator
+#         + "_"
+#         + args.model
+#         + "_baseline_epoch_"
+#         + "99"
+#         + ".pt",
+#     )
+#     print(model_name)
+#     if os.path.isfile(model_name):
+#         net.load_state_dict(torch.load(model_name))
+#         print(f"Model restored! Epoch: 99, Model name: {model_name}")
+#         model_found = True
+#     if not model_found:
+#         assert False, "could not find model to restore"
 
 
-if args.ngpu > 1:
-    net = torch.nn.DataParallel(net, device_ids=list(range(args.ngpu)))
+# if args.ngpu > 1:
+#     net = torch.nn.DataParallel(net, device_ids=list(range(args.ngpu)))
 
-if args.ngpu > 0:
-    net.to(device)
+# if args.ngpu > 0:
+#     net.to(device)
 
 print("fine till now")
 
