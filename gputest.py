@@ -120,33 +120,33 @@ train_transform = trn.Compose(
 )
 test_transform = trn.Compose([trn.ToTensor(), trn.Normalize(mean, std)])
 
-if args.dataset == "cifar10":
-    train_data_in = dset.CIFAR10("./data", train=True, transform=train_transform)
-    test_data = dset.CIFAR10("./data", train=False, transform=test_transform)
-    num_classes = 10
-elif args.dataset == "cifar100":
-    train_data_in = dset.CIFAR100("./data", train=True, transform=train_transform)
-    test_data = dset.CIFAR100("./data", train=False, transform=test_transform)
-    num_classes = 100
-elif args.dataset == "tinyimagenet":
-    train_transform = trn.Compose(
-        [
-            trn.RandomHorizontalFlip(),
-            trn.RandomCrop(64, padding=8),
-            trn.ToTensor(),
-            trn.Normalize(mean, std),
-        ]
-    )
-    test_transform = trn.Compose([trn.ToTensor(), trn.Normalize(mean, std)])
-    train_data_in = dset.ImageFolder(
-        root="/home/s223127906/deakin_devs/margin_ood/DOE/data/tiny-imagenet-200/train",
-        transform=train_transform,
-    )
-    test_data = dset.ImageFolder(
-        root="/home/s223127906/deakin_devs/margin_ood/DOE/data/tiny-imagenet-200/val",
-        transform=test_transform,
-    )
-    num_classes = 200
+# if args.dataset == "cifar10":
+#     train_data_in = dset.CIFAR10("./data", train=True, transform=train_transform)
+#     test_data = dset.CIFAR10("./data", train=False, transform=test_transform)
+#     num_classes = 10
+# elif args.dataset == "cifar100":
+#     train_data_in = dset.CIFAR100("./data", train=True, transform=train_transform)
+#     test_data = dset.CIFAR100("./data", train=False, transform=test_transform)
+#     num_classes = 100
+# elif args.dataset == "tinyimagenet":
+#     train_transform = trn.Compose(
+#         [
+#             trn.RandomHorizontalFlip(),
+#             trn.RandomCrop(64, padding=8),
+#             trn.ToTensor(),
+#             trn.Normalize(mean, std),
+#         ]
+#     )
+#     test_transform = trn.Compose([trn.ToTensor(), trn.Normalize(mean, std)])
+#     train_data_in = dset.ImageFolder(
+#         root="/home/s223127906/deakin_devs/margin_ood/DOE/data/tiny-imagenet-200/train",
+#         transform=train_transform,
+#     )
+#     test_data = dset.ImageFolder(
+#         root="/home/s223127906/deakin_devs/margin_ood/DOE/data/tiny-imagenet-200/val",
+#         transform=test_transform,
+#     )
+#     num_classes = 200
 
 
 # calib_indicator = ""
