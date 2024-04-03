@@ -402,11 +402,11 @@ def train():
         correct += predicted.eq(targets).sum().item()
 
         # mixed_input = MixUp(inputs_mix, mix_size=10)
-        for i in range(inputs.size(0)):
-            x = random.randint(1, 2)
-            if x == 1:
-                mixed_input_pil = to_pil_image(unnormalize(mixed_input[i], mean, std))
-                mixed_input[i] = new_trans(mixed_input_pil)
+        # for i in range(inputs.size(0)):
+        #     x = random.randint(1, 2)
+        #     if x == 1:
+        #         mixed_input_pil = to_pil_image(unnormalize(mixed_input[i], mean, std))
+        #         mixed_input[i] = new_trans(mixed_input_pil)
 
         mixed_outputs = model(mixed_input)
         _, mixed_preds = torch.max(mixed_outputs.data, 1)
@@ -517,7 +517,7 @@ elif args.dataset == "cifar100":
 perm_train = torch.randperm(train_loader.__len__() + train_loader_out.__len__())
 select_train = perm_train[: args.num_plot_samples]
 dataset = args.dataset
-epochs = 10
+epochs = 2
 margins = [0.3]
 for margin in margins:
     for epoch in range(epochs):
@@ -608,11 +608,11 @@ for margin in margins:
                 df.loc[len(df)] = mean_df
             except Exception as e:
                 logging.error(e)
-            df.to_csv(
-                "results/{}/{}/{}_margin_{}_trial_{}.csv".format(
-                    args.outlier_name, args.dataset, args.detectors, margin, i
-                )
-            )
+            # df.to_csv(
+            #     "results/{}/{}/{}_margin_{}_trial_{}.csv".format(
+            #         args.outlier_name, args.dataset, args.detectors, margin, i
+            #     )
+            # )
 
         logging.info(f"Five trial Average AUROC: {all_auroc[0]} ")
         logging.info(f"Five trial Average AUPR_IN: {all_aupr_in[0]} ")

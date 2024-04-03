@@ -254,9 +254,9 @@ def train():
     ):
         inset_tensor = in_set[0].to(device)
         out_set_tensor = out_set[0].to(device)
-        mixed_inputs = OE_mixup(inset_tensor, out_set_tensor)
+        # mixed_inputs = OE_mixup(inset_tensor, out_set_tensor)
 
-        data = torch.cat((inset_tensor, mixed_inputs), 0)
+        data = torch.cat((inset_tensor, out_set_tensor), 0)
         targets = in_set[1].to(device)
 
         # Forward prop inputs

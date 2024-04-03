@@ -3,6 +3,7 @@
     - msr_init: net parameter initialization.
     - progress_bar: progress bar mimic xlua.progress.
 """
+
 import os
 import sys
 import time
@@ -356,9 +357,11 @@ def plot_features(save_dir, features, labels, num_classes, epoch, prefix):
             linewidths=1,
             s=5,
         )
+    print(labels_ood)
+    print(features_ood.shape)
     plt.scatter(
-        features_ood[labels_ood == label_idx, 0],
-        features_ood[labels_ood == label_idx, 1],
+        features_ood[labels_ood == 10, 0],
+        features_ood[labels_ood == 10, 1],
         c="yellow",
         linewidths=1,
         marker="^",

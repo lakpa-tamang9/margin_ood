@@ -243,7 +243,7 @@ if args.load != "":
     )
     print(model_name)
     if os.path.isfile(model_name):
-        net.load_state_dict(torch.load(model_name))
+        net.load_state_dict(torch.load(model_name, map_location=torch.device(device)))
         print(f"Model restored! Epoch: 99, Model name: {model_name}")
         model_found = True
     if not model_found:
@@ -288,7 +288,7 @@ def calculate_differences(array_A, array_B):
 def train():
     net.train()  # enter train mode
     loss_avg = 0.0
-
+    mean_diffs = []
     # start at a random point of the outlier dataset; this induces more randomness without obliterating locality
     train_loader_out.dataset.offset = np.random.randint(len(train_loader_out.dataset))
     for batch_idx, (in_set, out_set) in enumerate(
@@ -326,8 +326,7 @@ def train():
         mcd = calculate_differences(max_id, max_ood)
         diffs = mcd.view(-1).tolist()
 
-        print(len(diffs))
-        print(np.mean(diffs))
+        mean_diffs.append(np.mean(diffs))
 
         loss_pre = torch.pow(F.relu(mcd), 2).mean()
         loss += -0.5 * torch.clamp(margin - loss_pre, min=0.0)
@@ -341,6 +340,7 @@ def train():
         loss_avg = loss_avg * 0.8 + float(loss) * 0.2
 
     state["train_loss"] = loss_avg
+    print(f"Diff betwen ID and OOD scores: {round(np.mean(mean_diffs), 3)}")
 
 
 # test function

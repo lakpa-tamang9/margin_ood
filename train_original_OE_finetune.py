@@ -27,7 +27,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument(
     "--dataset",
     type=str,
-    default="cifar10",
+    default="cifar100",
     help="Choose between CIFAR-10, CIFAR-100.",
 )
 parser.add_argument(
@@ -288,13 +288,13 @@ def train():
 
         loss = F.cross_entropy(outputs[: len(inset_tensor)], targets)
 
-        # loss += (
-        #     0.5
-        #     * -(
-        #         outputs[len(in_set[0]) :].mean(1)
-        #         - torch.logsumexp(outputs[len(in_set[0]) :], dim=1)
-        #     ).mean()
-        # )
+        loss += (
+            0.5
+            * -(
+                outputs[len(in_set[0]) :].mean(1)
+                - torch.logsumexp(outputs[len(in_set[0]) :], dim=1)
+            ).mean()
+        )
 
         loss.backward()
         train_losses.append(loss)
@@ -423,4 +423,3 @@ for margin in [0.5]:
                 100 - 100.0 * state["test_accuracy"],
             )
         )
-    print(train_losses)

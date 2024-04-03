@@ -26,10 +26,10 @@ parser.add_argument(
     default="test",
 )
 parser.add_argument(
-    "--dataset", "-d", type=str, default="cifar10", choices=["cifar10", "cifar100"]
+    "--dataset", "-d", type=str, default="cifar100", choices=["cifar10", "cifar100"]
 )
 parser.add_argument(
-    "--temp", type=int, default=100, help="Temperature value to scale the output."
+    "--temp", type=int, default=1, help="Temperature value to scale the output."
 )
 args = parser.parse_args()
 
@@ -96,26 +96,26 @@ isun_data = dset.ImageFolder(
 # Data Loaders
 
 texture_loader = torch.utils.data.DataLoader(
-    texture_data, batch_size=test_bs, num_workers=12, shuffle=True, pin_memory=False
+    texture_data, batch_size=test_bs, num_workers=8, shuffle=True, pin_memory=False
 )
 svhn_loader = torch.utils.data.DataLoader(
-    svhn_data, batch_size=test_bs, num_workers=12, shuffle=True, pin_memory=False
+    svhn_data, batch_size=test_bs, num_workers=8, shuffle=True, pin_memory=False
 )
 places365_loader = torch.utils.data.DataLoader(
     places365_data,
     batch_size=test_bs,
-    num_workers=12,
+    num_workers=8,
     shuffle=True,
     pin_memory=False,
 )
 lsunc_loader = torch.utils.data.DataLoader(
-    lsunc_data, batch_size=test_bs, num_workers=12, shuffle=True, pin_memory=False
+    lsunc_data, batch_size=test_bs, num_workers=8, shuffle=True, pin_memory=False
 )
 # lsunr_loader = torch.utils.data.DataLoader(
 #     lsunr_data, batch_size=test_bs, shuffle=True, pin_memory=False
 # )
 isun_loader = torch.utils.data.DataLoader(
-    isun_data, batch_size=test_bs, num_workers=12, shuffle=True, pin_memory=False
+    isun_data, batch_size=test_bs, num_workers=8, shuffle=True, pin_memory=False
 )
 
 ood_num_examples = len(test_data) // 5
@@ -161,11 +161,12 @@ def get_scores(loader, calc_id_acc=False, detector="msp", in_dist=False):
                 correct += predicted.eq(targets).sum().item()
                 acc.append(100.0 * correct / total)
 
-            # smax = to_np(F.softmax(output, dim=1))
             if detector == "msp":
                 output = output / args.temp
-                smax = to_np(output)
-                max_val = -np.max(smax, axis=1)
+                smax = to_np(F.softmax(output, dim=1))
+                # smax = to_np(output)
+                # max_val = -np.max(smax, axis=1)
+                max_val = np.max(smax, axis=1)
                 _score.append(max_val)
 
             elif detector == "maha":
@@ -212,8 +213,25 @@ def get_results(ood_loader, in_score, num_to_avg=num_to_avg):
     aurocs, auprs, fprs = [], [], []
     for _ in range(num_to_avg):
         out_score = get_scores(ood_loader)
+
+        # slicing the id and ood score list for plotting purpose
+        in_score_in_a_batch = in_score[:test_bs].tolist()
+        out_score_in_a_batch = out_score[:test_bs].tolist()
+        with open("test_scores/inscores_isun_ce.csv", "w") as f1, open(
+            "test_scores/outscores_isun_ce.csv", "w"
+        ) as f2:
+            # using csv.writer method from CSV package
+            write = csv.writer(f1)
+            write.writerows([in_score_in_a_batch])
+            # write ood scores
+            write = csv.writer(f2)
+            write.writerows([out_score_in_a_batch])
+
+        # print(in_score_in_a_batch)
+        # print(out_score_in_a_batch)
         if out_as_pos:  # OE's defines out samples as positive
             measures = get_measures(out_score, in_score)
+            # TODO: Get the inscores and outscores here and plot them as a line graph, against test batch
         else:
             measures = get_measures(-in_score, -out_score)
         aurocs.append(measures[0])
@@ -235,16 +253,14 @@ net.to(device)
 
 # OOD loaders for test ood datasets
 ood_loaders = {
-    "lsunc": lsunc_loader,
-    "textures": texture_loader,
-    "svhn": svhn_loader,
+    # "lsunc": lsunc_loader,
+    # "textures": texture_loader,
+    # "svhn": svhn_loader,
     "isun": isun_loader,
-    "places_365": places365_loader,
+    # "places_365": places365_loader,
 }
 accuracies = []
-output_metrics_dir = os.path.join(
-    "./FINAL_RESULTS_imgnet32/wo_margin", "MaPS_temp_{}".format(args.temp)
-)
+output_metrics_dir = os.path.join("ecml_results", f"{dataset}")
 if not os.path.exists(output_metrics_dir):
     os.makedirs(output_metrics_dir)
 
@@ -268,15 +284,14 @@ for i in range(5, 6):
             test_data,
             batch_size=test_bs,
             shuffle=True,
-            num_workers=12,
+            num_workers=8,
             pin_memory=True,
         )
-        model_path = (
-            "logs_test_and_ckpts_imgnet32/wo_margin/{}/{}_{}_{}_ckpt9.pt".format(
-                model, dataset, args.exp_name, margin
-            )
-        )
-        net.load_state_dict(torch.load(model_path))
+        # model_path = "logs_test_and_ckpts_300k/wo_margin/{}/{}_{}_{}_ckpt9.pt".format(
+        #     model, dataset, args.exp_name, margin
+        # )
+        model_path = "snapshots/baseline/cifar100_wrn_baseline_epoch_99.pt"
+        net.load_state_dict(torch.load(model_path, map_location=torch.device(device)))
         net.to(device)
         net.eval()
         in_score, accuracy, test_accuracies = get_scores(
