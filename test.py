@@ -1,17 +1,14 @@
 import numpy as np
-import sys
 import argparse
 import torch
-import torch.backends.cudnn as cudnn
 import torchvision.transforms as trn
 import torchvision.datasets as dset
 import torch.nn.functional as F
 from models.wrn import WideResNet
 from models.resnet import ResNet18
-from utils import *
+from utils.utils import *
 import csv
-from dataset_utils.svhn_loader import SVHN
-from pytorch_ood.detector import Mahalanobis
+from utils.svhn_loader import SVHN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -132,14 +129,6 @@ def compute_mean_and_cov(feature_vectors):
     return mean_vector, cov_matrix
 
 
-def mahalanobis_distance(x, mean_vector, cov_matrix):
-    x_minus_mu = x - mean_vector
-    inv_covmat = inv(cov_matrix)
-    left_term = np.dot(x_minus_mu, inv_covmat)
-    mahal = np.dot(left_term, x_minus_mu.T)
-    return np.array(np.sqrt(mahal))
-
-
 def get_scores(loader, calc_id_acc=False, detector="msp", in_dist=False):
     _score = []
     acc = []
@@ -169,16 +158,6 @@ def get_scores(loader, calc_id_acc=False, detector="msp", in_dist=False):
                 max_val = np.max(smax, axis=1)
                 _score.append(max_val)
 
-            elif detector == "maha":
-                feats_np = feat.cpu().numpy()
-                # print(feats_np.shape)
-                mean_vector, cov_matrix = compute_mean_and_cov(feats_np)
-                ood_scores = []
-                for feat_np in feats_np:
-                    score = mahalanobis_distance(feat_np, mean_vector, cov_matrix)
-                    ood_scores.append(score)
-                _score.append(ood_scores)
-
             elif detector == "energy":
                 _score.append(
                     to_np((args.temp * torch.logsumexp(output / args.temp, dim=1)))
@@ -192,13 +171,6 @@ def get_scores(loader, calc_id_acc=False, detector="msp", in_dist=False):
         return ood_score[:ood_num_examples].copy(), mean_acc, acc
     else:
         return ood_score[:ood_num_examples].copy()
-
-
-def maha_score(loader):
-    with torch.no_grad():
-        for batch_idx, (data, targets) in enumerate(loader):
-            data, targets = data.to(device), targets.to(device)
-            Mahalanobis(data)
 
 
 def calc_accuracy(X, true_labels):

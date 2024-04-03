@@ -18,6 +18,7 @@ logs_test_and_ckpts_imgnet32/
 logs_test_and_ckpts_tinyimgnet/
 ablation/
 test_scores/
+.vscode/
 develop-eggs/
 ecml_results/
 logs_test_and_ckpts/

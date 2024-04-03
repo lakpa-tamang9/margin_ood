@@ -7,13 +7,12 @@ import torch.nn as nn
 import torchvision.transforms as trn
 import torchvision.datasets as dset
 import torch.nn.functional as F
-from loss.loss import MarginLoss
-from dataset_utils.validation_dataset import validation_split
-from dataset_utils.randimages import RandomImages
+from utils.validation_dataset import validation_split
+from utils.randimages import RandomImages
 from models.resnet import ResNet18
-from utils import *
+from utils.utils import *
 from models.wrn import WideResNet
-from dataset_utils.resized_imagenet_loader import ImageNetDownSample
+from utils.resized_imagenet_loader import ImageNetDownSample
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
