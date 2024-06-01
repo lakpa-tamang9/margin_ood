@@ -6,9 +6,12 @@ import torchvision.datasets as dset
 import torch.nn.functional as F
 from models.wrn import WideResNet
 from models.resnet import ResNet18
+from models.allconv import AllConvNet
+import statistics as stat
 from utils.utils import *
 import csv
 from utils.svhn_loader import SVHN
+from models.densenet import DenseNet121
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -20,21 +23,54 @@ parser.add_argument(
     "--exp_name",
     "-en",
     type=str,
-    default="test",
+    default="1",
 )
 parser.add_argument(
-    "--dataset", "-d", type=str, default="cifar100", choices=["cifar10", "cifar100"]
+    "--method",
+    type=str,
+    default="oe",
+    choices=["oe", "macs", "div_oe", "mix_oe", "energy"],
+)
+
+parser.add_argument(
+    "--dataset",
+    "-d",
+    type=str,
+    default="cifar100",
+    choices=["cifar10", "cifar100", "svhn", "imgnet32"],
 )
 parser.add_argument(
     "--temp", type=int, default=1, help="Temperature value to scale the output."
+)
+parser.add_argument(
+    "--model",
+    "-m",
+    type=str,
+    default="wrn",
+    choices=["resnet", "wrn", "allconv", "densenet"],
+    help="Choose architecture.",
+)
+# WRN Architecture
+parser.add_argument("--layers", default=40, type=int, help="total number of layers")
+parser.add_argument("--widen_factor", default=2, type=int, help="widen factor")
+parser.add_argument("--droprate", default=0.3, type=float, help="dropout probability")
+parser.add_argument(
+    "--outlier_name",
+    "-on",
+    type=str,
+    default="300k",
+    choices=["300k", "imgnet32", "tinyimagenet"],
+    help="Choose the outlier data",
 )
 args = parser.parse_args()
 
 test_bs = 200
 num_to_avg = 1
 out_as_pos = True
-dataset = args.dataset
-model = "wrn"
+
+args.dataset = "svhn"
+args.method = "oe"
+args.model = "wrn"
 
 std = [x / 255 for x in [63.0, 62.1, 66.7]]
 mean = [x / 255 for x in [125.3, 123.0, 113.9]]
@@ -42,12 +78,26 @@ mean = [x / 255 for x in [125.3, 123.0, 113.9]]
 test_transform = trn.Compose([trn.ToTensor(), trn.Normalize(mean, std)])
 
 # Load cifar data
-if dataset == "cifar10":
+if args.dataset == "cifar10":
     test_data = dset.CIFAR10("data", train=False, transform=test_transform)
     num_classes = 10
-else:
+elif args.dataset == "cifar100":
     test_data = dset.CIFAR100("data", train=False, transform=test_transform)
     num_classes = 100
+elif args.dataset == "tinyimagenet":
+    test_data = dset.ImageFolder(
+        root="data/tiny-imagenet-200/test",
+        transform=test_transform,
+    )
+    num_classes = 200
+elif args.dataset == "svhn":
+    test_data = SVHN(
+        root="data/svhn",
+        split="test",
+        transform=trn.ToTensor(),
+        download=False,
+    )
+    num_classes = 10
 
 
 texture_data = dset.ImageFolder(
@@ -56,18 +106,14 @@ texture_data = dset.ImageFolder(
         [trn.Resize(32), trn.CenterCrop(32), trn.ToTensor(), trn.Normalize(mean, std)]
     ),
 )
-# svhn_data = dset.ImageFolder(
-#     root="data/svhn",
-#     transform=trn.Compose(
-#         [trn.Resize(32), trn.CenterCrop(32), trn.ToTensor(), trn.Normalize(mean, std)]
-#     ),
-# )
+# Cifar10 and 100 data
+cifar10_data = dset.CIFAR10("data", train=False, transform=trn.ToTensor())
+cifar100_data = dset.CIFAR100("data", train=False, transform=trn.ToTensor())
+
 svhn_data = SVHN(
     root="data/svhn",
     split="test",
-    transform=trn.Compose(
-        [trn.Resize(32), trn.CenterCrop(32), trn.ToTensor(), trn.Normalize(mean, std)]
-    ),
+    transform=trn.ToTensor(),
     download=False,
 )
 
@@ -91,7 +137,12 @@ isun_data = dset.ImageFolder(
 )
 
 # Data Loaders
-
+cifar10_loader = torch.utils.data.DataLoader(
+    cifar10_data, batch_size=test_bs, num_workers=8, shuffle=True, pin_memory=False
+)
+cifar100_loader = torch.utils.data.DataLoader(
+    cifar100_data, batch_size=test_bs, num_workers=8, shuffle=True, pin_memory=False
+)
 texture_loader = torch.utils.data.DataLoader(
     texture_data, batch_size=test_bs, num_workers=8, shuffle=True, pin_memory=False
 )
@@ -139,8 +190,13 @@ def get_scores(loader, calc_id_acc=False, detector="msp", in_dist=False):
         for batch_idx, (data, targets) in enumerate(loader):
             if batch_idx >= ood_num_examples // test_bs and in_dist is False:
                 break
+            if type(targets) is int:
+                continue
             data, targets = data.to(device), targets.to(device)
-            feat, output = net(data)
+            if args.model == "allconv":
+                output = net(data)
+            else:
+                feat, output = net(data)
             # print(feat.shape)
 
             if calc_id_acc:
@@ -154,8 +210,8 @@ def get_scores(loader, calc_id_acc=False, detector="msp", in_dist=False):
                 output = output / args.temp
                 smax = to_np(F.softmax(output, dim=1))
                 # smax = to_np(output)
-                # max_val = -np.max(smax, axis=1)
-                max_val = np.max(smax, axis=1)
+                max_val = -np.max(smax, axis=1)
+                # max_val = np.max(smax, axis=1)
                 _score.append(max_val)
 
             elif detector == "energy":
@@ -180,30 +236,19 @@ def calc_accuracy(X, true_labels):
     return acc
 
 
+def sample_error(arr):
+    std_dev = stat.stdev(arr)
+    sample_err = std_dev / (len(arr) ** 0.5)
+    return sample_err
+
+
 def get_results(ood_loader, in_score, num_to_avg=num_to_avg):
     net.eval()
     aurocs, auprs, fprs = [], [], []
     for _ in range(num_to_avg):
         out_score = get_scores(ood_loader)
-
-        # slicing the id and ood score list for plotting purpose
-        in_score_in_a_batch = in_score[:test_bs].tolist()
-        out_score_in_a_batch = out_score[:test_bs].tolist()
-        with open("test_scores/inscores_isun_ce.csv", "w") as f1, open(
-            "test_scores/outscores_isun_ce.csv", "w"
-        ) as f2:
-            # using csv.writer method from CSV package
-            write = csv.writer(f1)
-            write.writerows([in_score_in_a_batch])
-            # write ood scores
-            write = csv.writer(f2)
-            write.writerows([out_score_in_a_batch])
-
-        # print(in_score_in_a_batch)
-        # print(out_score_in_a_batch)
         if out_as_pos:  # OE's defines out samples as positive
             measures = get_measures(out_score, in_score)
-            # TODO: Get the inscores and outscores here and plot them as a line graph, against test batch
         else:
             measures = get_measures(-in_score, -out_score)
         aurocs.append(measures[0])
@@ -215,33 +260,47 @@ def get_results(ood_loader, in_score, num_to_avg=num_to_avg):
     return auroc, aupr, fpr
 
 
-# Restore model
-if model == "resnet":
+# Create model
+if args.model == "resnet":
     net = ResNet18(num_classes=num_classes)
+elif args.model == "allconv":
+    net = AllConvNet(num_classes=num_classes)
+elif args.model == "densenet":
+    net = DenseNet121(num_classes=num_classes)
 else:
-    net = WideResNet(depth=40, num_classes=num_classes, widen_factor=2, dropRate=0.3)
-
+    net = WideResNet(
+        args.layers, num_classes, args.widen_factor, dropRate=args.droprate
+    )
 net.to(device)
 
 # OOD loaders for test ood datasets
 ood_loaders = {
-    # "lsunc": lsunc_loader,
-    # "textures": texture_loader,
-    # "svhn": svhn_loader,
+    # "cifar10": cifar10_data,
+    # "cifar100": cifar100_data,
+    "lsunc": lsunc_loader,
+    "textures": texture_loader,
+    "svhn": svhn_loader,
     "isun": isun_loader,
-    # "places_365": places365_loader,
+    "places_365": places365_loader,
 }
 accuracies = []
-output_metrics_dir = os.path.join("ecml_results", f"{dataset}")
+output_metrics_dir = os.path.join(
+    "icdm/{}/tests".format(args.method), f"{args.dataset}"
+)
 if not os.path.exists(output_metrics_dir):
     os.makedirs(output_metrics_dir)
 
-for i in range(5, 6):
+if args.method == "macs":
+    margins_length = 10
+else:
+    margins_length = 1
+
+for i in range(margins_length):
     margin = i / 10
 
     with open(
         "{}/{}_{}_{}_margin_{}.csv".format(
-            output_metrics_dir, model, dataset, args.exp_name, margin
+            output_metrics_dir, args.model, args.dataset, args.exp_name, margin
         ),
         "w",
     ) as f:
@@ -249,7 +308,7 @@ for i in range(5, 6):
         csvwriter.writerow(["run", "margin", "ood_dataset", "auroc", "aupr", "fpr"])
 
     trial_results = []
-    for run in range(5):
+    for run in range(10):
         print(f"Evaluating for trial {run+1}")
         metrics = []
         test_loader = torch.utils.data.DataLoader(
@@ -262,7 +321,10 @@ for i in range(5, 6):
         # model_path = "logs_test_and_ckpts_300k/wo_margin/{}/{}_{}_{}_ckpt9.pt".format(
         #     model, dataset, args.exp_name, margin
         # )
-        model_path = "snapshots/baseline/cifar100_wrn_baseline_epoch_99.pt"
+        # model_path = "icdm/macs/train_logs_and_ckpts_300k/resnet/cifar100_resnet_baseline_m0.5_epoch_99.pt"
+        model_path = "icdm/{}/train_logs_and_ckpts_{}/{}/{}_1_{}_ckpt9.pt".format(
+            args.method, args.outlier_name, args.model, args.dataset, margin
+        )
         net.load_state_dict(torch.load(model_path, map_location=torch.device(device)))
         net.to(device)
         net.eval()
@@ -275,6 +337,8 @@ for i in range(5, 6):
         auprs = []
         fprs = []
         for ood_name, ood_loader in ood_loaders.items():
+            if args.dataset == ood_name:
+                continue
             auroc, aupr, fpr = get_results(ood_loader, in_score)
             aurocs.append(auroc)
             auprs.append(aupr)
@@ -304,7 +368,11 @@ for i in range(5, 6):
 
         with open(
             "{}/{}_{}_{}_margin_{}.csv".format(
-                output_metrics_dir, model, dataset, args.exp_name, margin
+                output_metrics_dir,
+                args.model,
+                args.dataset,
+                args.exp_name,
+                margin,
             ),
             "a",
         ) as f:
@@ -313,16 +381,36 @@ for i in range(5, 6):
 
         trial_results.append([mean_auroc, mean_aupr, mean_fpr])
 
-    avg_trial_result = [round((sum(x) / len(x)) * 100, 2) for x in zip(*trial_results)]
-    details = ["Trial", "avg.", "****"]
+    std_errs = [
+        round(sample_error(trial_result), 4) * 100
+        for trial_result in zip(*trial_results)
+    ]
+    print(std_errs)
+    std_err_acc = sample_error(accuracies)
+    print(std_err_acc)
+
+    avg_trial_result = [
+        round((sum(trial_result) / len(trial_result)) * 100, 2)
+        for trial_result in zip(*trial_results)
+    ]
+
+    # std_errs = [sample_error(avg_trial_result)]
+    mean_details = ["Trial", "avg.", "****"]
+    err_details = ["std_errs", "acc,auroc,aupr,fpr"]
 
     print(f"Mean accuracy is {round(np.mean(accuracies), 2)}%")
-    final_result = details + avg_trial_result
+    final_result = mean_details + avg_trial_result
+    errs_result = err_details + [std_err_acc] + std_errs
     with open(
         "{}/{}_{}_{}_margin_{}.csv".format(
-            output_metrics_dir, model, dataset, args.exp_name, margin
+            output_metrics_dir,
+            args.model,
+            args.dataset,
+            args.exp_name,
+            margin,
         ),
         "a",
     ) as f:
         csvwriter = csv.writer(f)
         csvwriter.writerows([final_result])
+        csvwriter.writerows([errs_result])

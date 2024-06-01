@@ -10,12 +10,11 @@ import torch.nn.functional as F
 from utils.validation_dataset import validation_split
 from utils.randimages import RandomImages
 from models.resnet import ResNet18
-from models.densenet import DenseNet121
-from models.allconv import AllConvNet
 from utils.utils import *
 from models.wrn import WideResNet
 from utils.resized_imagenet_loader import ImageNetDownSample
-from datasets import load_dataset
+from models.densenet import DenseNet121
+from models.allconv import AllConvNet
 from utils.svhn_loader import SVHN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -28,7 +27,7 @@ parser.add_argument(
     "--dataset",
     type=str,
     default="cifar10",
-    help="Choose between CIFAR-10, CIFAR-100, svhn.",
+    help="Choose between CIFAR-10, CIFAR-100, tinyimagenet.",
 )
 parser.add_argument(
     "--model",
@@ -59,12 +58,9 @@ parser.add_argument(
     default=False,
     help="Train a model to be used for calibration. This holds out some data for validation.",
 )
-parser.add_argument(
-    "--method", type=str, default="oe", choices=["oe", "macs", "energy"]
-)
 # Optimization options
 parser.add_argument(
-    "--epochs", "-e", type=int, default=10, help="Number of epochs to train."
+    "--epochs", "-e", type=int, default=100, help="Number of epochs to train."
 )
 parser.add_argument(
     "--learning_rate",
@@ -79,18 +75,6 @@ parser.add_argument("--test_bs", type=int, default=200)
 parser.add_argument("--momentum", type=float, default=0.9, help="Momentum.")
 parser.add_argument(
     "--decay", "-d", type=float, default=0.0005, help="Weight decay (L2 penalty)."
-)
-parser.add_argument(
-    "--m_in",
-    type=float,
-    default=-25.0,
-    help="margin for in-distribution; above this value will be penalized",
-)
-parser.add_argument(
-    "--m_out",
-    type=float,
-    default=-7.0,
-    help="margin for out-distribution; below this value will be penalized",
 )
 # WRN Architecture
 parser.add_argument("--layers", default=40, type=int, help="total number of layers")
@@ -111,7 +95,7 @@ parser.add_argument(
     default="./snapshots/baseline",
     help="Checkpoint path to resume / test.",
 )
-parser.add_argument("--exp_name", "-en", default="1", type=str)
+parser.add_argument("--exp_name", "-en", default="test", type=str)
 parser.add_argument("--test", "-t", action="store_true", help="Test only flag.")
 # Acceleration
 parser.add_argument("--ngpu", type=int, default=1, help="0 = CPU.")
@@ -147,7 +131,7 @@ elif args.dataset == "cifar100":
     test_data = dset.CIFAR100("./data", train=False, transform=test_transform)
     num_classes = 100
 elif args.dataset == "tinyimagenet":
-    train_transform = trn.Compose(
+    train_transform_tiny = trn.Compose(
         [
             trn.RandomHorizontalFlip(),
             trn.RandomCrop(32, padding=8),
@@ -155,16 +139,16 @@ elif args.dataset == "tinyimagenet":
             trn.Normalize(mean, std),
         ]
     )
+    test_transform_tiny = trn.Compose(
+        [trn.ToTensor(), trn.RandomCrop(32, padding=8), trn.Normalize(mean, std)]
+    )
     train_data_in = dset.ImageFolder(
         root="data/tiny-imagenet-200/train",
-        transform=train_transform,
-    )
-    tiny_image_test_transform = trn.Compose(
-        [trn.ToTensor(), trn.RandomCrop(32, padding=8), trn.Normalize(mean, std)]
+        transform=train_transform_tiny,
     )
     test_data = dset.ImageFolder(
         root="data/tiny-imagenet-200/val",
-        transform=tiny_image_test_transform,
+        transform=test_transform_tiny,
     )
     num_classes = 200
 elif args.dataset == "svhn":
@@ -181,8 +165,37 @@ elif args.dataset == "svhn":
         download=False,
     )
     num_classes = 10
+elif args.dataset == "imgnet32":
+    train_data_in = ImageNetDownSample(
+        root="./data/ImageNet32",
+        train = True,
+        transform=trn.Compose(
+            [
+                trn.ToTensor(),
+                trn.ToPILImage(),
+                trn.RandomCrop(32, padding=4),
+                trn.RandomHorizontalFlip(),
+                trn.ToTensor(),
+                trn.Normalize(mean, std),
+            ]
+        ),
+    )
+    num_classes = 1000
 
-
+    test_data = ImageNetDownSample(
+        root="./data/ImageNet32",
+        train = False,
+        transform=trn.Compose(
+            [
+                trn.ToTensor(),
+                trn.ToPILImage(),
+                trn.RandomCrop(32, padding=4),
+                trn.RandomHorizontalFlip(),
+                trn.ToTensor(),
+                trn.Normalize(mean, std),
+            ]
+        ),
+    )
 calib_indicator = ""
 if args.calibration:
     train_data_in, val_data = validation_split(train_data_in, val_share=0.1)
@@ -218,7 +231,7 @@ elif args.outlier_name == "300k":
     )
 elif args.outlier_name == "tinyimagenet":
     ood_data = dset.ImageFolder(
-        root="data/tiny-imagenet-200/train",
+        root="DOE/data/tiny-imagenet-200/train",
         transform=trn.Compose(
             [
                 trn.Resize(32),
@@ -255,6 +268,8 @@ test_loader = torch.utils.data.DataLoader(
 )
 
 # Create model
+
+# Create model
 if args.model == "resnet":
     net = ResNet18(num_classes=num_classes)
 elif args.model == "allconv":
@@ -265,24 +280,6 @@ else:
     net = WideResNet(
         args.layers, num_classes, args.widen_factor, dropRate=args.droprate
     )
-
-# Restore model
-model_found = False
-if args.load != "":
-    model_name = "snapshots/baseline/{}_{}_baseline_epoch_99.pt".format(
-        args.dataset, args.model
-    )
-    # if args.dataset == "svhn":
-    #     model_name = "snapshots/baseline/{}_{}_baseline_epoch_19.pt".format(
-    #         args.dataset, args.model
-    #     )
-    print(model_name)
-    if os.path.isfile(model_name):
-        net.load_state_dict(torch.load(model_name, map_location=torch.device(device)))
-        model_found = True
-    if not model_found:
-        assert False, "could not find model to restore"
-
 
 if args.ngpu > 1:
     net = torch.nn.DataParallel(net, device_ids=list(range(args.ngpu)))
@@ -314,87 +311,33 @@ scheduler = torch.optim.lr_scheduler.LambdaLR(
 )
 
 
-def calculate_differences(array_A, array_B):
-    differences = array_A[:, None] - array_B
-    return differences
-
-
 def train():
     net.train()  # enter train mode
     loss_avg = 0.0
-    mean_diffs = []
-    # start at a random point of the outlier dataset; this induces more randomness without obliterating locality
-    train_loader_out.dataset.offset = np.random.randint(len(train_loader_out.dataset))
-    for batch_idx, (in_set, out_set) in enumerate(
-        zip(train_loader_in, train_loader_out)
-    ):
-        inset_tensor = in_set[0].to(device)
-        out_set_tensor = out_set[0].to(device)
+    for data, target in train_loader_in:
+        data, target = data.cuda(), target.cuda()
 
-        if inset_tensor.size()[0] != out_set_tensor.size()[0]:
-            length = min(inset_tensor.size()[0], out_set_tensor.size()[0])
-            inset_tensor = inset_tensor[:length]
-            out_set_tensor = out_set_tensor[:length]
-
-        data = torch.cat((inset_tensor, out_set_tensor), 0)
-        targets = in_set[1].to(device)
-
-        # Forward prop inputs
+        # forward
         if args.model == "allconv":
-            outputs = net(data)
+            output = net(data)
         else:
-            _, outputs = net(data)
+            _, output = net(data)
 
-        if args.method == "macs":
-            normalized_probs = torch.nn.functional.softmax(outputs, dim=1)
-            max_id, _ = torch.max(normalized_probs[: len(inset_tensor)], dim=1)
-            max_ood, _ = torch.max(normalized_probs[len(inset_tensor) :], dim=1)
-
-            mcd = calculate_differences(max_id, max_ood)
-            diffs = mcd.view(-1).tolist()
-
-            mean_diffs.append(np.mean(diffs))
-
-        if args.method == "energy":
-            Ec_out = -torch.logsumexp(outputs[len(in_set[0]) :], dim=1)
-            Ec_in = -torch.logsumexp(outputs[: len(in_set[0])], dim=1)
-
+        # backward
+        scheduler.step()
         optimizer.zero_grad()
-
-        loss = F.cross_entropy(outputs[: len(inset_tensor)], targets)
-
-        if args.method == "oe" or "macs":
-            loss += (
-                0.5
-                * -(
-                    outputs[len(in_set[0]) :].mean(1)
-                    - torch.logsumexp(outputs[len(in_set[0]) :], dim=1)
-                ).mean()
-            )
-
-        if args.method == "energy":
-            loss += 0.1 * (
-                torch.pow(F.relu(Ec_in - args.m_in), 2).mean()
-                + torch.pow(F.relu(args.m_out - Ec_out), 2).mean()
-            )
-        if args.method == "macs":
-            loss_pre = torch.pow(F.relu(mcd), 2).mean()
-            loss += 0.5 * torch.clamp(margin - loss_pre, min=0.0)
-
+        loss = F.cross_entropy(output, target)
         loss.backward()
-
         optimizer.step()
 
-        scheduler.step()
         # exponential moving average
         loss_avg = loss_avg * 0.8 + float(loss) * 0.2
 
     state["train_loss"] = loss_avg
-    print(f"Diff betwen ID and OOD scores: {round(np.mean(mean_diffs), 3)}")
 
 
 # test function
-def test():
+def val():
     net.eval()
     loss_avg = 0.0
     correct = 0
@@ -421,40 +364,34 @@ def test():
 
 
 if args.test:
-    test()
+    val()
     print(state)
     exit()
 
 
-logs_n_ckpt_dir = os.path.join(
-    "./icdm/{}/train_logs_and_ckpts_{}".format(args.method, args.outlier_name),
-    args.model,
-)
+logs_n_ckpt_dirs = "snapshots/baseline"
+# checkpoint_dir = os.path.join(
+#     "./icdm/{}/logs_test_and_ckpts_{}".format(args.exp_name, args.outlier_name),
+#     args.model,
+# )
 
 # Create directories for logging metrics and saving trained model
 
-if not os.path.exists(logs_n_ckpt_dir):
-    os.makedirs(logs_n_ckpt_dir)
+if not os.path.exists(logs_n_ckpt_dirs):
+    os.makedirs(logs_n_ckpt_dirs)
 
-if not os.path.isdir(logs_n_ckpt_dir):
-    raise Exception("%s is not a dir" % logs_n_ckpt_dir)
+if not os.path.isdir(logs_n_ckpt_dirs):
+    raise Exception("%s is not a dir" % logs_n_ckpt_dirs)
 
 
 print("Beginning Training\n")
 
-if args.method == "macs":
-    margins_length = 10
-else:
-    margins_length = 1
-
 # Main loop
-for i in range(5, margins_length):
-    margin = i / 10
-    print("*****************\n")
-    print(f"Training with margin = {margin}")
+# for margin in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.8, 0.9, 1.0]:
+for margin in [0.5]:
     with open(
         os.path.join(
-            logs_n_ckpt_dir,
+            logs_n_ckpt_dirs,
             args.dataset + "_" + args.exp_name + f"_{margin}_" + "training_results.csv",
         ),
         "w",
@@ -466,19 +403,19 @@ for i in range(5, margins_length):
         begin_epoch = time.time()
 
         train()
-        test()
+        val()
 
         # Save model
         if epoch == args.epochs - 1:
             torch.save(
                 net.state_dict(),
                 os.path.join(
-                    logs_n_ckpt_dir,
+                    logs_n_ckpt_dirs,
                     args.dataset
                     + "_"
-                    + args.exp_name
-                    + f"_{margin}_"
-                    + "ckpt"
+                    + args.model
+                    + "_baseline"
+                    + "_epoch_"
                     + str(epoch)
                     + ".pt",
                 ),
@@ -488,12 +425,8 @@ for i in range(5, margins_length):
 
         with open(
             os.path.join(
-                logs_n_ckpt_dir,
-                args.dataset
-                + "_"
-                + args.exp_name
-                + f"_{margin}_"
-                + "training_results.csv",
+                logs_n_ckpt_dirs,
+                args.dataset + "_" + args.model + "_training_results.csv",
             ),
             "a",
         ) as f:
