@@ -68,10 +68,6 @@ test_bs = 200
 num_to_avg = 1
 out_as_pos = True
 
-args.dataset = "svhn"
-args.method = "oe"
-args.model = "wrn"
-
 std = [x / 255 for x in [63.0, 62.1, 66.7]]
 mean = [x / 255 for x in [125.3, 123.0, 113.9]]
 

@@ -28,7 +28,7 @@ parser.add_argument(
     "--dataset",
     type=str,
     default="cifar10",
-    help="Choose between CIFAR-10, CIFAR-100, svhn.",
+    help="Choose between CIFAR-10, CIFAR-100, svhn, imgnet32.",
 )
 parser.add_argument(
     "--model",
@@ -181,7 +181,36 @@ elif args.dataset == "svhn":
         download=False,
     )
     num_classes = 10
-
+elif args.dataset == "imgnet32":
+    train_data_in = ImageNetDownSample(
+        root="./data/ImageNet32",
+        train=True,
+        transform=trn.Compose(
+            [
+                trn.ToTensor(),
+                trn.ToPILImage(),
+                trn.RandomCrop(32, padding=4),
+                trn.RandomHorizontalFlip(),
+                trn.ToTensor(),
+                trn.Normalize(mean, std),
+            ]
+        ),
+    )
+    test_data = ImageNetDownSample(
+        root="./data/ImageNet32",
+        train=False,
+        transform=trn.Compose(
+            [
+                trn.ToTensor(),
+                trn.ToPILImage(),
+                trn.RandomCrop(32, padding=4),
+                trn.RandomHorizontalFlip(),
+                trn.ToTensor(),
+                trn.Normalize(mean, std),
+            ]
+        ),
+    )
+    num_classes = 1000
 
 calib_indicator = ""
 if args.calibration:
@@ -332,9 +361,17 @@ def train():
         out_set_tensor = out_set[0].to(device)
 
         if inset_tensor.size()[0] != out_set_tensor.size()[0]:
+            if (
+                len(inset_tensor) < args.batch_size
+                or len(out_set_tensor) < args.batch_size
+            ):  # done for imagenet32 as it has 96 size for inset
+                continue
             length = min(inset_tensor.size()[0], out_set_tensor.size()[0])
             inset_tensor = inset_tensor[:length]
             out_set_tensor = out_set_tensor[:length]
+
+        # print(inset_tensor.size())
+        # print(out_set_tensor.size())
 
         data = torch.cat((inset_tensor, out_set_tensor), 0)
         targets = in_set[1].to(device)
@@ -448,7 +485,7 @@ else:
     margins_length = 1
 
 # Main loop
-for i in range(5, margins_length):
+for i in range(margins_length):
     margin = i / 10
     print("*****************\n")
     print(f"Training with margin = {margin}")

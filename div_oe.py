@@ -38,7 +38,6 @@ parser.add_argument(
     "--dataset",
     type=str,
     default="cifar10",
-    help="Choose between CIFAR-10, CIFAR-100.",
 )
 parser.add_argument(
     "--model",
@@ -216,7 +215,36 @@ elif args.dataset == "svhn":
         download=False,
     )
     num_classes = 10
-
+elif args.dataset == "imgnet32":
+    train_data_in = ImageNetDownSample(
+        root="./data/ImageNet32",
+        train=True,
+        transform=trn.Compose(
+            [
+                trn.ToTensor(),
+                trn.ToPILImage(),
+                trn.RandomCrop(32, padding=4),
+                trn.RandomHorizontalFlip(),
+                trn.ToTensor(),
+                trn.Normalize(mean, std),
+            ]
+        ),
+    )
+    test_data = ImageNetDownSample(
+        root="./data/ImageNet32",
+        train=False,
+        transform=trn.Compose(
+            [
+                trn.ToTensor(),
+                trn.ToPILImage(),
+                trn.RandomCrop(32, padding=4),
+                trn.RandomHorizontalFlip(),
+                trn.ToTensor(),
+                trn.Normalize(mean, std),
+            ]
+        ),
+    )
+    num_classes = 1000
 
 calib_indicator = ""
 if args.calibration:
@@ -407,6 +435,20 @@ def train():
     # start at a random point of the outlier dataset; this induces more randomness without obliterating locality
     train_loader_out.dataset.offset = np.random.randint(len(train_loader_out.dataset))
     for in_set, out_set in zip(train_loader_in, train_loader_out):
+
+        inset_tensor = in_set[0].to(device)
+        out_set_tensor = out_set[0].to(device)
+
+        if inset_tensor.size()[0] != out_set_tensor.size()[0]:
+            if (
+                len(inset_tensor) < args.batch_size
+                or len(out_set_tensor) < args.batch_size
+            ):  # done for imagenet32 as it has 96 size for inset
+                continue
+            length = min(inset_tensor.size()[0], out_set_tensor.size()[0])
+            inset_tensor = inset_tensor[:length]
+            out_set_tensor = out_set_tensor[:length]
+
         aug_length = int(len(out_set[0]) * args.extrapolation_ratio)
         adv_outlier = extrapolate(
             net,
