@@ -12,6 +12,7 @@ from utils.utils import *
 import csv
 from utils.svhn_loader import SVHN
 from models.densenet import DenseNet121
+from utils.resized_imagenet_loader import ImageNetDownSample
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -38,6 +39,9 @@ parser.add_argument(
     type=str,
     default="cifar100",
     choices=["cifar10", "cifar100", "svhn", "imgnet32"],
+)
+parser.add_argument(
+    "--detector", type=str, default="msp", choices=["msp", "xent", "mls"]
 )
 parser.add_argument(
     "--temp", type=int, default=1, help="Temperature value to scale the output."
@@ -94,7 +98,22 @@ elif args.dataset == "svhn":
         download=False,
     )
     num_classes = 10
-
+elif args.dataset == "imgnet32":
+    test_data = ImageNetDownSample(
+        root="./data/ImageNet32",
+        train=False,
+        transform=trn.Compose(
+            [
+                trn.ToTensor(),
+                trn.ToPILImage(),
+                trn.RandomCrop(32, padding=4),
+                trn.RandomHorizontalFlip(),
+                trn.ToTensor(),
+                trn.Normalize(mean, std),
+            ]
+        ),
+    )
+    num_classes = 1000
 
 texture_data = dset.ImageFolder(
     root="data/textures/images",
@@ -176,7 +195,7 @@ def compute_mean_and_cov(feature_vectors):
     return mean_vector, cov_matrix
 
 
-def get_scores(loader, calc_id_acc=False, detector="msp", in_dist=False):
+def get_scores(loader, calc_id_acc=False, in_dist=False):
     _score = []
     acc = []
     correct = 0
@@ -202,7 +221,7 @@ def get_scores(loader, calc_id_acc=False, detector="msp", in_dist=False):
                 correct += predicted.eq(targets).sum().item()
                 acc.append(100.0 * correct / total)
 
-            if detector == "msp":
+            if args.detector == "msp":
                 output = output / args.temp
                 smax = to_np(F.softmax(output, dim=1))
                 # smax = to_np(output)
@@ -210,11 +229,15 @@ def get_scores(loader, calc_id_acc=False, detector="msp", in_dist=False):
                 # max_val = np.max(smax, axis=1)
                 _score.append(max_val)
 
-            elif detector == "energy":
-                _score.append(
-                    to_np((args.temp * torch.logsumexp(output / args.temp, dim=1)))
-                )
+            elif args.detector == "xent":
+                output = output / args.temp
+                _score.append(to_np((output.mean(1) - torch.logsumexp(output, dim=1))))
 
+            elif args.detector == "mls":
+                output = output / args.temp
+                smax = to_np(output)
+                max_val = -np.max(smax, axis=1)
+                _score.append(max_val)
     if calc_id_acc:
         mean_acc = np.mean(acc)
     ood_score = concat(_score)
@@ -286,6 +309,12 @@ output_metrics_dir = os.path.join(
 if not os.path.exists(output_metrics_dir):
     os.makedirs(output_metrics_dir)
 
+if args.detector != "msp":
+    detector_output_dirs = "icdm/detectors/{}/{}".format(args.method, args.detector)
+    if not os.path.exists(detector_output_dirs):
+        os.makedirs(detector_output_dirs)
+    output_metrics_dir = detector_output_dirs
+
 if args.method == "macs":
     margins_length = 10
 else:
@@ -314,10 +343,6 @@ for i in range(margins_length):
             num_workers=8,
             pin_memory=True,
         )
-        # model_path = "logs_test_and_ckpts_300k/wo_margin/{}/{}_{}_{}_ckpt9.pt".format(
-        #     model, dataset, args.exp_name, margin
-        # )
-        # model_path = "icdm/macs/train_logs_and_ckpts_300k/resnet/cifar100_resnet_baseline_m0.5_epoch_99.pt"
         model_path = "icdm/{}/train_logs_and_ckpts_{}/{}/{}_1_{}_ckpt9.pt".format(
             args.method, args.outlier_name, args.model, args.dataset, margin
         )

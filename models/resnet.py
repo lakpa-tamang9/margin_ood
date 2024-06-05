@@ -9,6 +9,7 @@ Reference:
 [1] Kaiming He, Xiangyu Zhang, Shaoqing Ren, Jian Sun
     Deep Residual Learning for Image Recognition. arXiv:1512.03385
 """
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -98,6 +99,11 @@ class ResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
         self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
         self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
+
+        # Calculate the output size of the final convolutional layer
+        self.avgpool = nn.AdaptiveAvgPool2d(
+            (1, 1)
+        )  # Adaptive pooling to get [1, 1] spatial dimension
         self.linear = nn.Linear(512 * block.expansion, num_classes)
 
     def _make_layer(self, block, planes, num_blocks, stride):
@@ -114,9 +120,8 @@ class ResNet(nn.Module):
         out = self.layer2(out)
         out = self.layer3(out)
         out = self.layer4(out)
-        out = F.avg_pool2d(out, 4)
-        out = out.view(out.size(0), -1)
-        # out = self.linear(out)
+        out = self.avgpool(out)  # Use adaptive pooling
+        out = torch.flatten(out, 1)  # Flatten the output
         return out, self.linear(out)
 
 
