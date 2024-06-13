@@ -10,12 +10,12 @@ import torch.nn.functional as F
 from utils.validation_dataset import validation_split
 from utils.randimages import RandomImages
 from models.resnet import ResNet18
+from models.densenet import DenseNet121
+from models.allconv import AllConvNet
 from utils.utils import *
 from models.wrn import WideResNet
-from models.allconv import AllConvNet
 from utils.resized_imagenet_loader import ImageNetDownSample
 from datasets import load_dataset
-from models.densenet import DenseNet121
 from utils.svhn_loader import SVHN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -28,6 +28,7 @@ parser.add_argument(
     "--dataset",
     type=str,
     default="cifar10",
+    help="Choose between CIFAR-10, CIFAR-100, svhn, imgnet32.",
 )
 parser.add_argument(
     "--model",
@@ -42,7 +43,6 @@ parser.add_argument(
     "-on",
     type=str,
     default="300k",
-    choices=["300k", "imgnet32", "tinyimagenet"],
     help="Choose the outlier data",
 )
 parser.add_argument(
@@ -53,15 +53,8 @@ parser.add_argument(
     help="Total number of auxiliary images from RandImages",
 )
 
-parser.add_argument("--mix_op", type=str, default="mixup", choices=["mixup", "cutmix"])
 parser.add_argument(
-    "--alpha", type=float, default=1.0, help="Parameter for Beta distribution."
-)
-parser.add_argument(
-    "--beta", type=float, default=1.0, help="Weighting factor for the OE objective."
-)
-parser.add_argument(
-    "--method", type=str, default="mix_oe", choices=["oe", "macs", "div_oe", "mix_oe"]
+    "--method", type=str, default="oe", choices=["oe", "macs", "energy"]
 )
 # Optimization options
 parser.add_argument(
@@ -81,9 +74,21 @@ parser.add_argument("--momentum", type=float, default=0.9, help="Momentum.")
 parser.add_argument(
     "--decay", "-d", type=float, default=0.0005, help="Weight decay (L2 penalty)."
 )
+parser.add_argument(
+    "--m_in",
+    type=float,
+    default=-25.0,
+    help="margin for in-distribution; above this value will be penalized",
+)
+parser.add_argument(
+    "--m_out",
+    type=float,
+    default=-7.0,
+    help="margin for out-distribution; below this value will be penalized",
+)
 # WRN Architecture
 parser.add_argument("--layers", default=40, type=int, help="total number of layers")
-parser.add_argument("--widen-factor", default=2, type=int, help="widen factor")
+parser.add_argument("--widen_factor", default=2, type=int, help="widen factor")
 parser.add_argument("--droprate", default=0.3, type=float, help="dropout probability")
 # Checkpoints
 parser.add_argument(
@@ -92,9 +97,6 @@ parser.add_argument(
     type=str,
     default="./logs/resnet",
     help="Folder to save checkpoints.",
-)
-parser.add_argument(
-    "--lambda_o", type=float, default=1, help="[0.1, 0.5, 1.0, 1.5, 2] dnl loss weight"
 )
 parser.add_argument(
     "--load",
@@ -138,7 +140,6 @@ elif args.dataset == "cifar100":
     train_data_in = dset.CIFAR100("./data", train=True, transform=train_transform)
     test_data = dset.CIFAR100("./data", train=False, transform=test_transform)
     num_classes = 100
-
 elif args.dataset == "svhn":
     train_data_in = SVHN(
         root="data/svhn",
@@ -184,7 +185,6 @@ elif args.dataset == "imgnet32":
     )
     num_classes = 1000
 
-
 if args.outlier_name == "imgnet32":
     ood_data = ImageNetDownSample(
         root="./data/ImageNet32",
@@ -215,7 +215,7 @@ elif args.outlier_name == "300k":
     )
 elif args.outlier_name == "tinyimagenet":
     ood_data = dset.ImageFolder(
-        root="DOE/data/tiny-imagenet-200/train",
+        root="data/tiny-imagenet-200/train",
         transform=trn.Compose(
             [
                 trn.Resize(32),
@@ -227,6 +227,7 @@ elif args.outlier_name == "tinyimagenet":
         ),
     )
 
+# Data Loaders
 train_loader_in = torch.utils.data.DataLoader(
     train_data_in,
     batch_size=args.batch_size,
@@ -272,7 +273,6 @@ if args.load != "":
     print(model_name)
     if os.path.isfile(model_name):
         net.load_state_dict(torch.load(model_name, map_location=torch.device(device)))
-        print(f"Model restored! Epoch: 99, Model name: {model_name}")
         model_found = True
     if not model_found:
         assert False, "could not find model to restore"
@@ -308,30 +308,9 @@ scheduler = torch.optim.lr_scheduler.LambdaLR(
 )
 
 
-class SoftCE(nn.Module):
-    def __init__(self, reduction="mean"):
-        super(SoftCE, self).__init__()
-        self.reduction = reduction
-
-    def forward(self, logits, soft_targets):
-        preds = logits.log_softmax(dim=-1)
-        assert preds.shape == soft_targets.shape
-
-        loss = torch.sum(-soft_targets * preds, dim=-1)
-
-        if self.reduction == "mean":
-            return torch.mean(loss)
-        elif self.reduction == "sum":
-            return torch.sum(loss)
-        elif self.reduction == "none":
-            return loss
-        else:
-            raise ValueError(
-                "Reduction type '{:s}' is not supported!".format(self.reduction)
-            )
-
-
-soft_xent = SoftCE()
+def calculate_differences(array_A, array_B):
+    differences = array_A[:, None] - array_B
+    return differences
 
 
 def train():
@@ -340,12 +319,9 @@ def train():
     mean_diffs = []
     # start at a random point of the outlier dataset; this induces more randomness without obliterating locality
     train_loader_out.dataset.offset = np.random.randint(len(train_loader_out.dataset))
-    for batch_idx, (in_set, out_set) in enumerate(
-        zip(train_loader_in, train_loader_out)
-    ):
+    for _, (in_set, out_set) in enumerate(zip(train_loader_in, train_loader_out)):
         inset_tensor = in_set[0].to(device)
         out_set_tensor = out_set[0].to(device)
-        targets = in_set[1].to(device)
 
         if inset_tensor.size()[0] != out_set_tensor.size()[0]:
             if (
@@ -357,39 +333,51 @@ def train():
             inset_tensor = inset_tensor[:length]
             out_set_tensor = out_set_tensor[:length]
 
-        x, y, oe_x = inset_tensor, targets, out_set_tensor
-        bs = x.size(0)
+        data = torch.cat((inset_tensor, out_set_tensor), 0)
+        targets = in_set[1].to(device)
 
-        y = y.long()
-
-        one_hot_y = torch.zeros(bs, num_classes).cuda()
-        one_hot_y.scatter_(1, y.view(-1, 1), 1)
-
+        # Forward prop inputs
         if args.model == "allconv":
-            logits = net(x)
+            outputs = net(data)
         else:
-            _, logits = net(x)
+            _, outputs = net(data)
 
-        # ID loss
-        id_loss = F.cross_entropy(logits, y)
+        if args.method == "macs":
+            normalized_probs = torch.nn.functional.softmax(outputs, dim=1)
+            max_id, _ = torch.max(normalized_probs[: len(inset_tensor)], dim=1)
+            max_ood, _ = torch.max(normalized_probs[len(inset_tensor) :], dim=1)
 
-        lam = np.random.beta(args.alpha, args.alpha)
-        mixed_x = lam * x + (1 - lam) * oe_x
+            mcd = calculate_differences(max_id, max_ood)
+            diffs = mcd.view(-1).tolist()
 
-        # construct soft labels and compute loss
-        oe_y = torch.ones(oe_x.size(0), num_classes).cuda() / num_classes
-        soft_labels = lam * one_hot_y + (1 - lam) * oe_y
+            mean_diffs.append(np.mean(diffs))
 
-        if args.model == "allconv":
-            mixed_out = net(mixed_x)
-        else:
-            _, mixed_out = net(mixed_x)
-        mixed_loss = soft_xent(mixed_out, soft_labels)
-
-        # Total loss
-        loss = id_loss + args.beta * mixed_loss
+        if args.method == "energy":
+            Ec_out = -torch.logsumexp(outputs[len(in_set[0]) :], dim=1)
+            Ec_in = -torch.logsumexp(outputs[: len(in_set[0])], dim=1)
 
         optimizer.zero_grad()
+
+        loss = F.cross_entropy(outputs[: len(inset_tensor)], targets)
+
+        if args.method == "oe" or "macs":
+            loss += (
+                0.5
+                * -(
+                    outputs[len(in_set[0]) :].mean(1)
+                    - torch.logsumexp(outputs[len(in_set[0]) :], dim=1)
+                ).mean()
+            )
+
+        if args.method == "energy":
+            loss += 0.1 * (
+                torch.pow(F.relu(Ec_in - args.m_in), 2).mean()
+                + torch.pow(F.relu(args.m_out - Ec_out), 2).mean()
+            )
+        if args.method == "macs":
+            loss_pre = torch.pow(F.relu(mcd), 2).mean()
+            loss += 0.5 * torch.clamp(margin - loss_pre, min=0.0)
+
         loss.backward()
 
         optimizer.step()
@@ -399,7 +387,6 @@ def train():
         loss_avg = loss_avg * 0.8 + float(loss) * 0.2
 
     state["train_loss"] = loss_avg
-    print(f"Diff betwen ID and OOD scores: {round(np.mean(mean_diffs), 3)}")
 
 
 # test function

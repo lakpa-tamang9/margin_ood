@@ -2,16 +2,13 @@
 from torch.autograd import Variable
 import numpy as np
 import os
-import pickle
 import argparse
 import time
 import torch
-import torch.nn as nn
 import torch.backends.cudnn as cudnn
 import torchvision.transforms as trn
 import torchvision.datasets as dset
 import torch.nn.functional as F
-from tqdm import tqdm
 from models.wrn import WideResNet
 from utils.randimages import RandomImages
 from utils.resized_imagenet_loader import ImageNetDownSample
@@ -56,12 +53,7 @@ parser.add_argument(
     help="Choose the outlier data",
 )
 parser.add_argument("--method", type=str, default="div_oe")
-parser.add_argument(
-    "--calibration",
-    "-c",
-    action="store_true",
-    help="Train a model to be used for calibration. This holds out some data for validation.",
-)
+
 # Optimization options
 parser.add_argument(
     "--epochs", "-e", type=int, default=10, help="Number of epochs to train."
@@ -182,25 +174,6 @@ elif args.dataset == "cifar100":
     train_data_in = dset.CIFAR100("./data", train=True, transform=train_transform)
     test_data = dset.CIFAR100("./data", train=False, transform=test_transform)
     num_classes = 100
-elif args.dataset == "tinyimagenet":
-    train_transform = trn.Compose(
-        [
-            trn.RandomHorizontalFlip(),
-            trn.RandomCrop(32, padding=8),
-            trn.ToTensor(),
-            trn.Normalize(mean, std),
-        ]
-    )
-    test_transform = trn.Compose([trn.ToTensor(), trn.Normalize(mean, std)])
-    train_data_in = dset.ImageFolder(
-        root="data/tiny-imagenet-200/train",
-        transform=train_transform,
-    )
-    test_data = dset.ImageFolder(
-        root="data/tiny-imagenet-200/val",
-        transform=test_transform,
-    )
-    num_classes = 200
 elif args.dataset == "svhn":
     train_data_in = SVHN(
         root="data/svhn",
@@ -245,11 +218,6 @@ elif args.dataset == "imgnet32":
         ),
     )
     num_classes = 1000
-
-calib_indicator = ""
-if args.calibration:
-    train_data_in, val_data = validation_split(train_data_in, val_share=0.1)
-    calib_indicator = "_calib"
 
 
 if args.outlier_name == "imgnet32":

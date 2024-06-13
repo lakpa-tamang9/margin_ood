@@ -13,6 +13,7 @@ import csv
 from utils.svhn_loader import SVHN
 from models.densenet import DenseNet121
 from utils.resized_imagenet_loader import ImageNetDownSample
+from scipy.linalg import inv
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -46,6 +47,7 @@ parser.add_argument(
 parser.add_argument(
     "--temp", type=int, default=1, help="Temperature value to scale the output."
 )
+parser.add_argument("--save_scores" type=bool, action="store_true", help = "Save the confidence scores for KDE or box plots.")
 parser.add_argument(
     "--model",
     "-m",
@@ -174,9 +176,7 @@ places365_loader = torch.utils.data.DataLoader(
 lsunc_loader = torch.utils.data.DataLoader(
     lsunc_data, batch_size=test_bs, num_workers=8, shuffle=True, pin_memory=False
 )
-# lsunr_loader = torch.utils.data.DataLoader(
-#     lsunr_data, batch_size=test_bs, shuffle=True, pin_memory=False
-# )
+
 isun_loader = torch.utils.data.DataLoader(
     isun_data, batch_size=test_bs, num_workers=8, shuffle=True, pin_memory=False
 )
@@ -186,7 +186,6 @@ print(f"ood num examples is {ood_num_examples}")
 concat = lambda x: np.concatenate(x, axis=0)
 to_np = lambda x: x.data.cpu().numpy()
 
-from scipy.linalg import inv
 
 
 def compute_mean_and_cov(feature_vectors):
@@ -266,6 +265,29 @@ def get_results(ood_loader, in_score, num_to_avg=num_to_avg):
     aurocs, auprs, fprs = [], [], []
     for _ in range(num_to_avg):
         out_score = get_scores(ood_loader)
+
+        if args.save_scores:
+            # slicing the id and ood score list for plotting purpose
+            in_score_in_a_batch = in_score[:test_bs].tolist()
+            out_score_in_a_batch = out_score[:test_bs].tolist()
+            with open(
+                "icdm/confidence_scores/inscores_isun_{}_{}.csv".format(
+                    args.method, args.model
+                ),
+                "w",
+            ) as f1, open(
+                "icdm/confidence_scores/outscores_isun_{}_{}.csv".format(
+                    args.method, args.model
+                ),
+                "w",
+            ) as f2:
+                # using csv.writer method from CSV package
+                write = csv.writer(f1)
+                write.writerows([in_score_in_a_batch])
+                # write ood scores
+                write = csv.writer(f2)
+                write.writerows([out_score_in_a_batch])
+
         if out_as_pos:  # OE's defines out samples as positive
             measures = get_measures(out_score, in_score)
         else:
@@ -294,8 +316,6 @@ net.to(device)
 
 # OOD loaders for test ood datasets
 ood_loaders = {
-    # "cifar10": cifar10_data,
-    # "cifar100": cifar100_data,
     "lsunc": lsunc_loader,
     "textures": texture_loader,
     "svhn": svhn_loader,
