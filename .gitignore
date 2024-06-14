@@ -10,6 +10,12 @@ __pycache__/
 .Python
 build/
 results/
+icdm/confidence_scores/
+icdm/detectors
+notebooks/
+.vscode/
+snapshots/energyood/
+snapshots/finetune/
 FINAL_RESULTS_300k/
 FINAL_RESULTS_imgnet32/
 FINAL_RESULTS_tinyimgnet/
