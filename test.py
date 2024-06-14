@@ -47,7 +47,12 @@ parser.add_argument(
 parser.add_argument(
     "--temp", type=int, default=1, help="Temperature value to scale the output."
 )
-parser.add_argument("--save_scores" type=bool, action="store_true", help = "Save the confidence scores for KDE or box plots.")
+parser.add_argument(
+    "--save_scores",
+    type=bool,
+    action="store_true",
+    help="Save the confidence scores for KDE or box plots.",
+)
 parser.add_argument(
     "--model",
     "-m",
@@ -185,7 +190,6 @@ ood_num_examples = len(test_data) // 5
 print(f"ood num examples is {ood_num_examples}")
 concat = lambda x: np.concatenate(x, axis=0)
 to_np = lambda x: x.data.cpu().numpy()
-
 
 
 def compute_mean_and_cov(feature_vectors):
