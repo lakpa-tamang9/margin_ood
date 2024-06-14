@@ -54,11 +54,13 @@ Download all datasets an put them in the `./data` folder in the root repository 
 
    We provide the respective fine-tuned models for each network, and dataset. They are located under `./icdm/{method_name}/train_logs_and_ckpts_300k/model_name`. Please note that due to size constrain, we only upload a subset of all fine-tuned models at this stage. Due to this, testing all methods might not be possible. However, all the results are uploaded. Later, we will upload remaining to a cloud drive for access to everyone.
 
-   For example to test MaCS method on wideresnet architecture using cifar10 as ID data.
+   To reproduce the results presented in the paper, select appropriate method, model, and ID dataset and run `test.py`. For example to test MaCS method on wideresnet architecture using cifar10 as ID data.
 
    ```
    python test.py --method macs --model wrn --dataset cifar10
    ```
+
+   All the outcomes of test are stored as `.csv` files in `./icdm` folder.
 
 3. Training baseline:
 
@@ -78,4 +80,50 @@ Furthermore, we compile all the results of all methods fine-tuned on different m
 
 ```
 python results_stats.py
+```
+
+The sample result snapshot for MaCS using CIFAR10 as ID fine-tuned on WRN with margin of 0.0 is as follow.
+
+```
+"method": "macs",
+"all_results": [
+   {
+         "id": "cifar10",
+         "model": "wrn",
+         "margin_results": [
+            {
+               "margin": 0,
+               "test_results": [
+                     {
+                        "ood": "lsunc",
+                        "auroc": "99.73±0.01",
+                        "aupr": "99.72±0.01",
+                        "fpr": "1.26±0.08"
+                     },
+                     {
+                        "ood": "textures",
+                        "auroc": "98.31±0.03",
+                        "aupr": "98.22±0.05",
+                        "fpr": "8.64±0.17"
+                     },
+                     {
+                        "ood": "svhn",
+                        "auroc": "99.2±0.04",
+                        "aupr": "98.91±0.06",
+                        "fpr": "2.68±0.13"
+                     },
+                     {
+                        "ood": "isun",
+                        "auroc": "98.97±0.03",
+                        "aupr": "98.75±0.05",
+                        "fpr": "5.1±0.12"
+                     },
+                     {
+                        "ood": "places_365",
+                        "auroc": "96.48±0.09",
+                        "aupr": "96.53±0.1",
+                        "fpr": "16.3±0.53"
+                     }
+               ]
+            },
 ```
