@@ -11,7 +11,7 @@ __pycache__/
 build/
 results/
 icdm/confidence_scores/
-icdm/detectors
+icdm
 notebooks/
 .vscode/
 snapshots/energyood/
