@@ -1,18 +1,40 @@
 # Margin bounded Confidence Scores
 
-This repository contains the implementation for the OOD detection method MaCS.
+This repository contains the PyTorch implementation of our OOD detection method, MaCS.
+
+## Required libraries
+
+- PyTorch
+- Torchvision
+- Numpy
+
+## Dataset used
+
+Download all datasets an put them in the `./data` folder in the root repository of this code. Some of the datasets are accessed from standard PyTorch Torchvision library. Other datasets used in this experiments can be downloaded as:
+
+**Outlier Data**
+
+- [300K Random Images](https://people.eecs.berkeley.edu/~hendrycks/300K_random_images.npy)
+
+**Test OOD Data**
+
+- [Places 365](http://places2.csail.mit.edu/download.html)
+- [Textures](https://www.robots.ox.ac.uk/~vgg/data/dtd/)
+- [SVHN](http://ufldl.stanford.edu/housenumbers/)
+- [LSUN](https://www.dropbox.com/scl/fi/ohqceel2yrxuhntg0mirg/LSUN.tar.gz?rlkey=l2ovcmekq2gj529m3b2hw2ppp&e=1)
+- [iSUN](https://www.dropbox.com/scl/fi/wpkzixs1zbqomg5ufq0dd/iSUN.tar.gz?rlkey=46mty3ly8kk3vdxtlnmdjc6zu&e=1)
 
 ## Usage
 
 1. Fine-tuning:
 
-   For example, to fine-tune the "MaCS" model on Wideresnet architecture using a CIFAR10 dataset, use the following command.
+   For example, to fine-tune the "MaCS" model on Wideresnet architecture using a CIFAR10 dataset, use the following command. `train.py` supports three methods **OE**, **Energy**, and **MaCS**.
 
    ```
    python train.py --method macs --model wrn --dataset cifar10
    ```
 
-   Similarly,`train.py` supports three methods **OE**, **Energy**, and **MaCS**. To run other benchmarks as listed in the paper. Run following:
+   To run other benchmarks as listed in the paper. Run following:
 
    - For MixOE
 
@@ -26,7 +48,7 @@ This repository contains the implementation for the OOD detection method MaCS.
    python div_oe.py --method divoe --model wrn --dataset cifar10
    ```
 
-2. Test:
+2. Testing:
 
    For example to test MaCS method on wideresnet architecture using cifar10 as ID data.
 
@@ -46,10 +68,10 @@ This repository contains the implementation for the OOD detection method MaCS.
 
 ## Results
 
-All the results are present in
-For MaCS, margin values are between {0.0, 0.9}.
+The results of all tests are inside `./icdm` folder. The results of all methods, trained on all models and datasets are provided.
 
-The results of all tests are provided in following file structure:
-method/tests/id_datasets/model_dataset_1_margin_0.0.csv
+Furthermore, we compile all the results of all methods fine-tuned on different models and datasets and present it in a json file. The final output file can be found `./icdm/final_results.json`. To reproduce this run following:
 
-To compile all the outcomes of all methods on different models and datasets and to get the statistically significant results, run following.
+```
+python results_stats.py
+```
