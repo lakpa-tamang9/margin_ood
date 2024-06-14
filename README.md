@@ -28,6 +28,8 @@ Download all datasets an put them in the `./data` folder in the root repository 
 
 1. Fine-tuning:
 
+   We provide pretrained models for finetuning at ure using a CIFAR10 dataset, use the following command. `snapshots/baseline` directory. Note that, at this stage we only uploaded a subset of all pretrained models, for WRN and Allconv only. Because pretrained models for resnet and Densenet are quite large, they will be shared publicly through cloud drive later.
+
    For example, to fine-tune the "MaCS" model on Wideresnet architecture using a CIFAR10 dataset, use the following command. `train.py` supports three methods **OE**, **Energy**, and **MaCS**.
 
    ```
@@ -49,6 +51,8 @@ Download all datasets an put them in the `./data` folder in the root repository 
    ```
 
 2. Testing:
+
+   We provide the respective fine-tuned models for each network, and dataset. They are located under `./icdm/{method_name}/train_logs_and_ckpts_300k/model_name`. Please note that due to size constrain, we only upload a subset of all fine-tuned models at this stage. Due to this, testing all methods might not be possible. However, all the results are uploaded. Later, we will upload remaining to a cloud drive for access to everyone.
 
    For example to test MaCS method on wideresnet architecture using cifar10 as ID data.
 
