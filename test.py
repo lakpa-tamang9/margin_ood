@@ -13,6 +13,8 @@ import csv
 from utils.svhn_loader import SVHN
 from models.densenet import DenseNet121
 from utils.resized_imagenet_loader import ImageNetDownSample
+from utils.cifar10c_loader import CIFAR10C
+from utils.cifar100c_loader import CIFAR100C
 from scipy.linalg import inv
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -31,7 +33,7 @@ parser.add_argument(
     "--method",
     type=str,
     default="oe",
-    choices=["oe", "macs", "div_oe", "mix_oe", "energy"],
+    choices=["oe", "oe_um", "logitnorm", "fmfp", "macs", "div_oe", "mix_oe", "energy"],
 )
 
 parser.add_argument(
@@ -48,8 +50,25 @@ parser.add_argument(
     "--temp", type=int, default=1, help="Temperature value to scale the output."
 )
 parser.add_argument(
-    "--save_scores",
+    "--train_batch_size",
+    type=int,
+    default=128,
+    help="Batch size at which the model was trained",
+)
+parser.add_argument(
+    "--run_all_margins",
     type=bool,
+    default=False,
+    help="If set to true, then testing macs will occur across m = [0.0, 1.0)",
+)
+parser.add_argument(
+    "--test_near_ood",
+    type=bool,
+    default=False,
+    help="If set to true, then Testing will occur in near ood data, corrupted version of c10/c100.",
+)
+parser.add_argument(
+    "--save_scores",
     action="store_true",
     help="Save the confidence scores for KDE or box plots.",
 )
@@ -65,6 +84,12 @@ parser.add_argument(
 parser.add_argument("--layers", default=40, type=int, help="total number of layers")
 parser.add_argument("--widen_factor", default=2, type=int, help="widen factor")
 parser.add_argument("--droprate", default=0.3, type=float, help="dropout probability")
+parser.add_argument(
+    "--corruption_type",
+    default="gaussian_blur",
+    type=str,
+    help="Corruption type in CIFAR10/100 datasets.",
+)
 parser.add_argument(
     "--outlier_name",
     "-on",
@@ -138,7 +163,6 @@ svhn_data = SVHN(
     transform=trn.ToTensor(),
     download=False,
 )
-
 places365_data = dset.ImageFolder(
     root="data/places365",
     transform=trn.Compose(
@@ -158,9 +182,31 @@ isun_data = dset.ImageFolder(
     transform=trn.Compose([trn.ToTensor(), trn.Normalize(mean, std)]),
 )
 
+# Corrupted Dataset Loading
+cifar10c = CIFAR10C(
+    "data/CIFAR-10-C",
+    args.corruption_type,
+    transform=trn.Compose(
+        [trn.Resize(32), trn.CenterCrop(32), trn.ToTensor(), trn.Normalize(mean, std)]
+    ),
+)
+cifar100c = CIFAR10C(
+    "data/CIFAR-100-C",
+    args.corruption_type,
+    transform=trn.Compose(
+        [trn.Resize(32), trn.CenterCrop(32), trn.ToTensor(), trn.Normalize(mean, std)]
+    ),
+)
+
 # Data Loaders
 cifar10_loader = torch.utils.data.DataLoader(
     cifar10_data, batch_size=test_bs, num_workers=8, shuffle=True, pin_memory=False
+)
+cifar10c_loader = torch.utils.data.DataLoader(
+    cifar10c, batch_size=test_bs, shuffle=True, num_workers=8, pin_memory=False
+)
+cifar100c_loader = torch.utils.data.DataLoader(
+    cifar100c, batch_size=test_bs, shuffle=True, num_workers=8, pin_memory=False
 )
 cifar100_loader = torch.utils.data.DataLoader(
     cifar100_data, batch_size=test_bs, num_workers=8, shuffle=True, pin_memory=False
@@ -271,7 +317,7 @@ def get_results(ood_loader, in_score, num_to_avg=num_to_avg):
         out_score = get_scores(ood_loader)
 
         if args.save_scores:
-            # slicing the id and ood score list for plotting purpose
+            # slicing the id and ood score list for kde plot
             in_score_in_a_batch = in_score[:test_bs].tolist()
             out_score_in_a_batch = out_score[:test_bs].tolist()
             with open(
@@ -326,10 +372,25 @@ ood_loaders = {
     "isun": isun_loader,
     "places_365": places365_loader,
 }
+near_ood_loaders = {
+    "cifar10": cifar10_loader,
+    "cifar10c": cifar10c_loader,
+    "cifar100": cifar100_loader,
+    "cifar100c": cifar100c_loader,
+}
+
+
+if args.test_near_ood:
+    test_loaders = near_ood_loaders
+else:
+    test_loaders = ood_loaders
+
 accuracies = []
 output_metrics_dir = os.path.join(
-    "icdm/{}/tests".format(args.method), f"{args.dataset}"
+    "kais/{}/tests".format(args.method),
+    f"{args.dataset}",
 )
+
 if not os.path.exists(output_metrics_dir):
     os.makedirs(output_metrics_dir)
 
@@ -340,12 +401,16 @@ if args.detector != "msp":
     output_metrics_dir = detector_output_dirs
 
 if args.method == "macs":
-    margins_length = 10
+    if args.run_all_margins:
+        margins_length = 10
+    else:
+        margins_length = 1
 else:
     margins_length = 1
 
 for i in range(margins_length):
     margin = i / 10
+    # margin = 0.5
 
     with open(
         "{}/{}_{}_{}_margin_{}.csv".format(
@@ -367,9 +432,17 @@ for i in range(margins_length):
             num_workers=8,
             pin_memory=True,
         )
-        model_path = "icdm/{}/train_logs_and_ckpts_{}/{}/{}_1_{}_ckpt9.pt".format(
-            args.method, args.outlier_name, args.model, args.dataset, margin
-        )
+
+        if args.method in ["logitnorm", "fmfp"]:
+            # Test baselines for fmfp, logitnorm, and ce
+            model_path = "kais/{}/{}_{}_baseline_epoch_99.pt".format(
+                args.method, args.dataset, args.model
+            )
+        else:
+            # For oe finetuned models
+            model_path = "kais/{}/train_logs_and_ckpts_{}/{}/{}_1_{}_ckpt9.pt".format(
+                args.method, args.train_batch_size, args.model, args.dataset, margin
+            )
         net.load_state_dict(torch.load(model_path, map_location=torch.device(device)))
         net.to(device)
         net.eval()
@@ -381,7 +454,7 @@ for i in range(margins_length):
         aurocs = []
         auprs = []
         fprs = []
-        for ood_name, ood_loader in ood_loaders.items():
+        for ood_name, ood_loader in test_loaders.items():
             if args.dataset == ood_name:
                 continue
             auroc, aupr, fpr = get_results(ood_loader, in_score)

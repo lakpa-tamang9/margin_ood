@@ -17,6 +17,7 @@ from models.wrn import WideResNet
 from utils.resized_imagenet_loader import ImageNetDownSample
 from datasets import load_dataset
 from utils.svhn_loader import SVHN
+from utils.um_loss import CustomLoss
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -54,7 +55,7 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--method", type=str, default="oe", choices=["oe", "macs", "energy"]
+    "--method", type=str, default="oe", choices=["oe", "macs", "energy", "oe_um"]
 )
 # Optimization options
 parser.add_argument(
@@ -360,7 +361,7 @@ def train():
 
         loss = F.cross_entropy(outputs[: len(inset_tensor)], targets)
 
-        if args.method == "oe" or "macs":
+        if args.method == "oe" or "macs" or "oe_um":
             loss += (
                 0.5
                 * -(
@@ -377,6 +378,10 @@ def train():
         if args.method == "macs":
             loss_pre = torch.pow(F.relu(mcd), 2).mean()
             loss += 0.5 * torch.clamp(margin - loss_pre, min=0.0)
+
+        if args.method == "oe_um":
+            criterion = CustomLoss("UM")
+            loss += criterion(outputs[: len(inset_tensor)], targets)
 
         loss.backward()
 
@@ -422,8 +427,13 @@ if args.test:
     exit()
 
 
+# logs_n_ckpt_dir = os.path.join(
+#     "./icdm/{}/train_logs_and_ckpts_{}".format(args.method, args.outlier_name),
+#     args.model,
+# )
+
 logs_n_ckpt_dir = os.path.join(
-    "./icdm/{}/train_logs_and_ckpts_{}".format(args.method, args.outlier_name),
+    "./kais/{}/train_logs_and_ckpts_{}".format(args.method, args.batch_size),
     args.model,
 )
 
@@ -439,7 +449,10 @@ if not os.path.isdir(logs_n_ckpt_dir):
 print("Beginning Training\n")
 
 if args.method == "macs":
-    margins_length = 10
+    if args.run_all_margins:
+        margins_length = 10
+    else:
+        margins_length = 1
 else:
     margins_length = 1
 
